@@ -74,6 +74,68 @@ components:
       description: Ticket id.
 
   schemas:
+    UserRole:
+      type: string
+      enum:
+        - STAFF
+        - PATIENT
+        - DOCTOR
+      description: Authenticated user role used by auth-service JWT payloads.
+    JwtAccessTokenClaims:
+      type: object
+      required:
+        - iss
+        - sub
+        - email
+        - role
+        - iat
+        - exp
+        - jti
+      properties:
+        iss:
+          type: string
+          description: Token issuer. Defaults are staff, patient, and doctor unless overridden by auth-service settings.
+          examples:
+            - patient
+        sub:
+          type: string
+          description: Auth user id encoded as a string.
+          examples:
+            - "1"
+        email:
+          type: string
+          examples:
+            - patient
+        role:
+          $ref: "#/components/schemas/UserRole"
+        iat:
+          type: integer
+          description: Issued-at time as Unix epoch seconds.
+          examples:
+            - 1779945000
+        exp:
+          type: integer
+          description: Expiration time as Unix epoch seconds.
+          examples:
+            - 1779945900
+        jti:
+          type: string
+          format: uuid
+          description: Token id used for access-token revocation.
+        patientId:
+          type:
+            - integer
+            - "null"
+          description: Present when the authenticated user is linked to a patient.
+          examples:
+            - 1
+        doctorId:
+          type:
+            - integer
+            - "null"
+          description: Present when the authenticated user is linked to a doctor.
+          examples:
+            - 10
     ErrorResponse:
       type: object
       required:

@@ -17,7 +17,7 @@ post:
       content:
         application/json:
           schema:
-            $ref: ../openapi.yaml#/components/schemas/AuthResponse
+            $ref: ../openapi.yaml#/components/schemas/TokenResponse
     "400":
       $ref: ../../../common/components.yaml#/components/responses/BadRequest
     "401":

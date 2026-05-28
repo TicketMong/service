@@ -25,13 +25,13 @@ components:
     LoginRequest:
       type: object
       required:
-        - username
+        - email
         - password
       properties:
-        username:
+        email:
           type: string
           examples:
-            - user@example.com
+            - patient
         password:
           type: string
           format: password
@@ -42,18 +42,57 @@ components:
       properties:
         refreshToken:
           type: string
-    AuthTokens:
+    UserResponse:
+      type: object
+      required:
+        - id
+        - email
+        - displayName
+        - role
+        - isActive
+        - createdAt
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+          examples:
+            - patient
+        displayName:
+          type: string
+          examples:
+            - Lee Seoyeon
+        role:
+          $ref: ../../common/components.yaml#/components/schemas/UserRole
+        patientId:
+          type:
+            - integer
+            - "null"
+        doctorId:
+          type:
+            - integer
+            - "null"
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+    TokenResponse:
       type: object
       required:
         - accessToken
         - refreshToken
         - tokenType
         - expiresIn
+        - refreshExpiresIn
+        - user
       properties:
         accessToken:
           type: string
+          description: HS256 JWT matching the common JwtAccessTokenClaims payload contract.
         refreshToken:
           type: string
+          description: Opaque refresh token string.
         tokenType:
           type: string
           enum:
@@ -62,28 +101,9 @@ components:
           type: integer
           minimum: 1
           description: Access token lifetime in seconds.
-    AuthUser:
-      type: object
-      required:
-        - id
-        - username
-        - roles
-      properties:
-        id:
-          type: string
-        username:
-          type: string
-        roles:
-          type: array
-          items:
-            type: string
-    AuthResponse:
-      type: object
-      required:
-        - tokens
-        - user
-      properties:
-        tokens:
-          $ref: "#/components/schemas/AuthTokens"
+        refreshExpiresIn:
+          type: integer
+          minimum: 1
+          description: Refresh token lifetime in seconds.
         user:
-          $ref: "#/components/schemas/AuthUser"
+          $ref: "#/components/schemas/UserResponse"
