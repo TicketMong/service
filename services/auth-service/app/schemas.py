@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class LoginRequest(BaseModel):
@@ -11,14 +11,17 @@ class LoginRequest(BaseModel):
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
+    id: str
     email: str
     displayName: str
     role: str
-    patientId: int | None = None
-    doctorId: int | None = None
     isActive: bool
     createdAt: datetime
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def stringify_id(cls, value: object) -> str:
+        return str(value)
 
 
 class TokenResponse(BaseModel):
@@ -43,8 +46,19 @@ class DemoAccountResponse(BaseModel):
     password: str
     displayName: str
     role: str
-    patientId: int | None = None
-    doctorId: int | None = None
+
+
+class HealthResponse(BaseModel):
+    status: str
+    service: str
+    timestamp: datetime
+
+
+class ReadinessResponse(BaseModel):
+    status: str
+    service: str
+    checks: dict[str, str]
+    timestamp: datetime
 
 
 class AuditLogResponse(BaseModel):

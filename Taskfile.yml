@@ -21,7 +21,7 @@ vars:
   DEV_IMAGE_REGISTRY: '{{default "localhost:5001" .DEV_IMAGE_REGISTRY}}'
   DEV_IMAGE_NAMESPACE: '{{default "" .DEV_IMAGE_NAMESPACE}}'
   DEV_IMAGE_TAG: '{{default "dev" .DEV_IMAGE_TAG}}'
-  APP_SERVICES: auth-service patient-service appointment-service prescription-service notification-service
+  APP_SERVICES: auth-service patient-service appointment-service prescription-service notification-service payment-service
   DASHBOARD_SERVICE: '{{default "dashboard" .DASHBOARD_SERVICE}}'
 
 tasks:
@@ -67,7 +67,9 @@ tasks:
           -r services/prescription-service/requirements.txt \
           -r services/prescription-service/requirements-test.txt \
           -r services/notification-service/requirements.txt \
-          -r services/notification-service/requirements-test.txt
+          -r services/notification-service/requirements-test.txt \
+          -r services/payment-service/requirements.txt \
+          -r services/payment-service/requirements-test.txt
         printf 'Python venv is ready at %s.\n' "${venv_dir}"
 
   test-runner-build:

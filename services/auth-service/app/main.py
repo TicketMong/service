@@ -1,6 +1,10 @@
 from datetime import UTC, datetime
 
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request, Response, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app import models
@@ -9,7 +13,17 @@ from app.config import settings
 from app.database import SessionLocal, engine, get_db
 from app.models import AuditLog, RefreshToken, RevokedToken, User
 from app.observability import setup_request_logging
-from app.schemas import AuditLogResponse, DemoAccountResponse, LoginRequest, LogoutRequest, RefreshTokenRequest, TokenResponse, UserResponse
+from app.schemas import (
+    AuditLogResponse,
+    DemoAccountResponse,
+    HealthResponse,
+    LoginRequest,
+    LogoutRequest,
+    ReadinessResponse,
+    RefreshTokenRequest,
+    TokenResponse,
+    UserResponse,
+)
 from app.security import create_access_token, create_refresh_token, decode_access_token, hash_refresh_token, verify_password
 from app.seed import DEMO_USERS, seed_demo_users
 
@@ -22,9 +36,49 @@ app = FastAPI(title=settings.service_name)
 setup_request_logging(app, settings.service_name)
 
 
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    return _error_response(request, exc.status_code, _error_code_for_status(exc.status_code), str(exc.detail))
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    return _error_response(
+        request,
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "request.validation_failed",
+        "Request validation failed.",
+        {"errors": exc.errors()},
+    )
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": settings.service_name}
+
+
+@app.get("/healthz", response_model=HealthResponse)
+def healthz() -> HealthResponse:
+    return HealthResponse(status="ok", service=settings.service_name, timestamp=datetime.now(UTC))
+
+
+@app.get("/readyz", response_model=ReadinessResponse)
+def readyz(db: Session = Depends(get_db)) -> ReadinessResponse:
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database is not ready") from exc
+    return ReadinessResponse(
+        status="ready",
+        service=settings.service_name,
+        checks={"database": "ok"},
+        timestamp=datetime.now(UTC),
+    )
+
+
+@app.get("/metrics")
+def metrics() -> Response:
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.post("/auth/login", response_model=TokenResponse)
@@ -59,8 +113,6 @@ def demo_accounts() -> list[DemoAccountResponse]:
             password=str(account["password"]),
             displayName=str(account["display_name"]),
             role=str(account["role"]),
-            patientId=account["patient_id"],
-            doctorId=account["doctor_id"],
         )
         for account in DEMO_USERS
     ]
@@ -124,9 +176,9 @@ def audit_logs(
 ) -> list[AuditLogResponse]:
     payload = _require_valid_payload(authorization, db)
     user = _get_user_from_payload(payload, db)
-    if user.role != "STAFF":
+    if user.role != "ADMIN":
         record_audit(db, request, event_type="AUDIT_LOG_VIEW_DENIED", outcome="DENIED", user=user)
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="STAFF role required")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="ADMIN role required")
     record_audit(db, request, event_type="AUDIT_LOG_VIEWED", outcome="ALLOW", user=user)
     logs = db.query(AuditLog).order_by(AuditLog.id.desc()).limit(100).all()
     return [AuditLogResponse.model_validate(log) for log in logs]
@@ -159,8 +211,6 @@ def _issue_token_response(db: Session, user: User) -> TokenResponse:
         user_id=user.id,
         email=user.email,
         role=user.role,
-        patient_id=user.patient_id,
-        doctor_id=user.doctor_id,
     )
     refresh_token, token_hash, refresh_expires_at = create_refresh_token()
     db.add(RefreshToken(token_hash=token_hash, user_id=user.id, expires_at=refresh_expires_at))
@@ -191,3 +241,34 @@ def _is_expired(value: datetime) -> bool:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return value <= datetime.now(UTC)
+
+
+def _error_response(
+    request: Request,
+    status_code: int,
+    code: str,
+    message: str,
+    details: dict | None = None,
+) -> JSONResponse:
+    request_id = getattr(request.state, "request_id", None) or request.headers.get("X-Request-Id") or ""
+    body = {
+        "error": {
+            "code": code,
+            "message": message,
+        },
+        "requestId": request_id,
+        "occurredAt": datetime.now(UTC).isoformat(),
+    }
+    if details:
+        body["error"]["details"] = details
+    return JSONResponse(status_code=status_code, content=body)
+
+
+def _error_code_for_status(status_code: int) -> str:
+    if status_code == status.HTTP_401_UNAUTHORIZED:
+        return "auth.invalid_token"
+    if status_code == status.HTTP_403_FORBIDDEN:
+        return "auth.forbidden"
+    if status_code == status.HTTP_503_SERVICE_UNAVAILABLE:
+        return "service.unavailable"
+    return "request.failed"

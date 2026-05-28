@@ -23,10 +23,6 @@ HTTP_REQUEST_DURATION_SECONDS = Histogram(
 )
 
 
-def get_current_request_id() -> str | None:
-    return request_id_context.get()
-
-
 def setup_request_logging(app: FastAPI, service_name: str) -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     logger = logging.getLogger(service_name)

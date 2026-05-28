@@ -16,6 +16,8 @@ COPY services/prescription-service/requirements.txt services/prescription-servic
 COPY services/prescription-service/requirements-test.txt services/prescription-service/requirements-test.txt
 COPY services/notification-service/requirements.txt services/notification-service/requirements.txt
 COPY services/notification-service/requirements-test.txt services/notification-service/requirements-test.txt
+COPY services/payment-service/requirements.txt services/payment-service/requirements.txt
+COPY services/payment-service/requirements-test.txt services/payment-service/requirements-test.txt
 
 RUN python -m pip install --no-cache-dir --root-user-action=ignore --upgrade pip \
     && python -m pip install --no-cache-dir --root-user-action=ignore \
@@ -28,4 +30,6 @@ RUN python -m pip install --no-cache-dir --root-user-action=ignore --upgrade pip
       -r services/prescription-service/requirements.txt \
       -r services/prescription-service/requirements-test.txt \
       -r services/notification-service/requirements.txt \
-      -r services/notification-service/requirements-test.txt
+      -r services/notification-service/requirements-test.txt \
+      -r services/payment-service/requirements.txt \
+      -r services/payment-service/requirements-test.txt

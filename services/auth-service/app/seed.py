@@ -6,28 +6,28 @@ from app.security import hash_password
 
 DEMO_USERS = [
     {
-        "email": "staff",
-        "password": "staff1234",
-        "display_name": "원무 담당자 김민지",
-        "role": "STAFF",
+        "email": "admin@example.com",
+        "password": "admin1234",
+        "display_name": "Platform Admin",
+        "role": "ADMIN",
         "patient_id": None,
         "doctor_id": None,
     },
     {
-        "email": "patient",
-        "password": "patient1234",
-        "display_name": "이서연",
-        "role": "PATIENT",
-        "patient_id": 1,
+        "email": "customer@example.com",
+        "password": "customer1234",
+        "display_name": "Ticket Customer",
+        "role": "CUSTOMER",
+        "patient_id": None,
         "doctor_id": None,
     },
     {
-        "email": "doctor",
-        "password": "doctor1234",
-        "display_name": "박준호 전문의",
-        "role": "DOCTOR",
+        "email": "provider@example.com",
+        "password": "provider1234",
+        "display_name": "Concert Provider",
+        "role": "PROVIDER",
         "patient_id": None,
-        "doctor_id": 10,
+        "doctor_id": None,
     },
 ]
 

@@ -24,14 +24,6 @@ class User(Base):
         return self.display_name
 
     @property
-    def patientId(self) -> int | None:
-        return self.patient_id
-
-    @property
-    def doctorId(self) -> int | None:
-        return self.doctor_id
-
-    @property
     def isActive(self) -> bool:
         return self.is_active
 

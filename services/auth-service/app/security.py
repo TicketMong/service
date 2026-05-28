@@ -38,13 +38,15 @@ def verify_password(password: str, password_hash: str) -> bool:
     return hmac.compare_digest(actual, expected)
 
 
-def create_access_token(*, user_id: int, email: str, role: str, patient_id: int | None, doctor_id: int | None) -> tuple[str, str, datetime]:
+def create_access_token(*, user_id: int, email: str, role: str) -> tuple[str, str, datetime]:
     now = int(time.time())
     exp = now + settings.token_ttl_seconds
     token_id = str(uuid4())
     role = role.upper()
+    if role not in settings.jwt_roles:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token role")
     payload = {
-        "iss": settings.jwt_issuers[role],
+        "iss": settings.jwt_issuer,
         "sub": str(user_id),
         "email": email,
         "role": role,
@@ -52,11 +54,7 @@ def create_access_token(*, user_id: int, email: str, role: str, patient_id: int 
         "exp": exp,
         "jti": token_id,
     }
-    if patient_id is not None:
-        payload["patientId"] = patient_id
-    if doctor_id is not None:
-        payload["doctorId"] = doctor_id
-    return sign_jwt(payload, settings.jwt_secrets[role]), token_id, datetime.fromtimestamp(exp, UTC)
+    return sign_jwt(payload, settings.jwt_secret), token_id, datetime.fromtimestamp(exp, UTC)
 
 
 def create_refresh_token() -> tuple[str, str, datetime]:
@@ -76,10 +74,13 @@ def decode_access_token(token: str) -> dict:
 
     payload = _json_loads_b64url(payload_b64)
     role = str(payload.get("role", "")).upper()
-    if role not in settings.jwt_secrets:
+    if role not in settings.jwt_roles:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token role")
 
-    expected_signature = _signing_signature(f"{header_b64}.{payload_b64}", settings.jwt_secrets[role])
+    if str(payload.get("iss", "")) != settings.jwt_issuer:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token issuer")
+
+    expected_signature = _signing_signature(f"{header_b64}.{payload_b64}", settings.jwt_secret)
     if not hmac.compare_digest(signature_b64, expected_signature):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token signature")
 
