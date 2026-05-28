@@ -22,6 +22,7 @@ vars:
   DEV_IMAGE_NAMESPACE: '{{default "" .DEV_IMAGE_NAMESPACE}}'
   DEV_IMAGE_TAG: '{{default "dev" .DEV_IMAGE_TAG}}'
   APP_SERVICES: auth-service patient-service appointment-service prescription-service notification-service payment-service
+  APP_IMAGE_SERVICES: auth-service concert-service reservation-service payment-service ticket-service notification-service
   DASHBOARD_SERVICE: '{{default "dashboard" .DASHBOARD_SERVICE}}'
 
 tasks:
@@ -180,9 +181,16 @@ tasks:
         if [ -n "${image_namespace}" ]; then
           image_prefix="${image_registry%/}/${image_namespace#/}"
         fi
-        for service in {{.APP_SERVICES}}; do
+        for service in {{.APP_IMAGE_SERVICES}}; do
           printf 'building %s/%s:%s\n' "${image_prefix}" "${service}" "${image_tag}"
-          docker build -t "${image_prefix}/${service}:${image_tag}" "services/${service}"
+          case "${service}" in
+            concert-service|reservation-service)
+              docker build -f "services/${service}/Dockerfile" -t "${image_prefix}/${service}:${image_tag}" .
+              ;;
+            *)
+              docker build -t "${image_prefix}/${service}:${image_tag}" "services/${service}"
+              ;;
+          esac
         done
         printf 'building %s/%s:%s\n' "${image_prefix}" "${dashboard}" "${image_tag}"
         docker build -t "${image_prefix}/${dashboard}:${image_tag}" "${dashboard}"
@@ -202,7 +210,7 @@ tasks:
         if [ -n "${image_namespace}" ]; then
           image_prefix="${image_registry%/}/${image_namespace#/}"
         fi
-        for service in {{.APP_SERVICES}} ${dashboard}; do
+        for service in {{.APP_IMAGE_SERVICES}} ${dashboard}; do
           printf 'pushing %s/%s:%s\n' "${image_prefix}" "${service}" "${image_tag}"
           docker push "${image_prefix}/${service}:${image_tag}"
         done

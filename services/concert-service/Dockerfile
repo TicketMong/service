@@ -11,8 +11,10 @@ ENV PATH="/opt/venv/bin:${PATH}"
 
 COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
 
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+COPY services/concert-service/pyproject.toml services/concert-service/uv.lock ./services/concert-service/
+COPY packages/server ./packages/server
+WORKDIR /build/services/concert-service
+RUN uv sync --frozen --no-dev --no-install-project --no-editable
 
 FROM python:3.12-slim AS runtime
 
@@ -20,11 +22,12 @@ WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
 ENV PATH="/opt/venv/bin:${PATH}"
 
 COPY --from=builder /opt/venv /opt/venv
-COPY app ./app
-COPY cmd ./cmd
+COPY services/concert-service/app ./app
+COPY services/concert-service/cmd ./cmd
 RUN groupadd --system --gid 10001 app \
     && useradd --system --uid 10001 --gid app --home-dir /app --shell /usr/sbin/nologin app \
     && chown -R app:app /app

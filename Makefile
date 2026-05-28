@@ -40,6 +40,14 @@ APP_SERVICES := \
 	prescription-service \
 	notification-service
 
+APP_IMAGE_SERVICES := \
+	auth-service \
+	concert-service \
+	reservation-service \
+	payment-service \
+	ticket-service \
+	notification-service
+
 SERVICE_DIRS := $(addprefix services/,$(APP_SERVICES))
 DASHBOARD_SERVICE ?= dashboard
 
@@ -151,16 +159,21 @@ app-images-build:
 		printf '%s\n' 'IMAGE_TAG is required, for example: make app-images-build IMAGE_REGISTRY=localhost:5001 IMAGE_TAG=dev' >&2; \
 		exit 2; \
 	fi; \
-	for service in $(APP_SERVICES); do \
+	for service in $(APP_IMAGE_SERVICES); do \
 		printf 'building %s/%s:%s\n' '$(IMAGE_REPOSITORY_PREFIX)' "$$service" '$(IMAGE_TAG)'; \
-		docker build -t "$(IMAGE_REPOSITORY_PREFIX)/$$service:$(IMAGE_TAG)" "services/$$service"; \
+		case "$$service" in \
+			concert-service|reservation-service) \
+				docker build -f "services/$$service/Dockerfile" -t "$(IMAGE_REPOSITORY_PREFIX)/$$service:$(IMAGE_TAG)" . ;; \
+			*) \
+				docker build -t "$(IMAGE_REPOSITORY_PREFIX)/$$service:$(IMAGE_TAG)" "services/$$service" ;; \
+		esac; \
 	done; \
 	printf 'building %s/%s:%s\n' '$(IMAGE_REPOSITORY_PREFIX)' '$(DASHBOARD_SERVICE)' '$(IMAGE_TAG)'; \
 	docker build -t "$(IMAGE_REPOSITORY_PREFIX)/$(DASHBOARD_SERVICE):$(IMAGE_TAG)" "$(DASHBOARD_SERVICE)"
 
 app-images-push: app-images-build
 	@set -euo pipefail; \
-	for service in $(APP_SERVICES) $(DASHBOARD_SERVICE); do \
+	for service in $(APP_IMAGE_SERVICES) $(DASHBOARD_SERVICE); do \
 		printf 'pushing %s/%s:%s\n' '$(IMAGE_REPOSITORY_PREFIX)' "$$service" '$(IMAGE_TAG)'; \
 		docker push "$(IMAGE_REPOSITORY_PREFIX)/$$service:$(IMAGE_TAG)"; \
 	done
