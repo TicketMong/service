@@ -13,6 +13,7 @@
 - 중복 요청 방지가 필요한 생성/변경 API는 `Idempotency-Key` 헤더를 받는다.
 - 목록 조회 페이지네이션은 `limit`, `cursor` 쿼리 파라미터를 사용한다.
 - 오류 응답은 공통 `ErrorResponse` 스키마를 사용한다.
+- `/healthz`, `/readyz`, `/metrics` 운영 엔드포인트는 [operational-endpoints.md](./operational-endpoints.md)를 기준으로 한다.
 
 ## JWT 규칙
 

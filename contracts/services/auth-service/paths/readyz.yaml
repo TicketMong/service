@@ -7,6 +7,6 @@ get:
       content:
         application/json:
           schema:
-            $ref: ../openapi.yaml#/components/schemas/ReadinessResponse
-    "500":
-      $ref: ../../../common/components.yaml#/components/responses/InternalServerError
+            $ref: ../../../common/components.yaml#/components/schemas/ReadinessResponse
+    "503":
+      $ref: ../../../common/components.yaml#/components/responses/ServiceUnavailable

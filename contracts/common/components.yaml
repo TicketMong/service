@@ -183,6 +183,57 @@ components:
           format: date-time
           examples:
             - "2026-05-28T10:15:30Z"
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - service
+      properties:
+        status:
+          type: string
+          enum:
+            - ok
+          examples:
+            - ok
+        service:
+          type: string
+          examples:
+            - auth-service
+        timestamp:
+          type: string
+          format: date-time
+          description: Response generation time in UTC.
+          examples:
+            - "2026-05-28T10:15:30Z"
+    ReadinessResponse:
+      type: object
+      required:
+        - status
+        - service
+        - checks
+      properties:
+        status:
+          type: string
+          enum:
+            - ready
+          examples:
+            - ready
+        service:
+          type: string
+          examples:
+            - auth-service
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+          examples:
+            - database: ok
+        timestamp:
+          type: string
+          format: date-time
+          description: Response generation time in UTC.
+          examples:
+            - "2026-05-28T10:15:30Z"
     PageInfo:
       type: object
       required:
@@ -234,6 +285,12 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
     InternalServerError:
       description: Unexpected server error.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ServiceUnavailable:
+      description: Service is not ready to receive traffic.
       content:
         application/json:
           schema:

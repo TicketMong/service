@@ -5,7 +5,7 @@ get:
     "200":
       description: Prometheus text exposition format.
       content:
-        text/plain:
+        text/plain; version=0.0.4; charset=utf-8:
           schema:
             type: string
     "500":

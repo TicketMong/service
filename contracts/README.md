@@ -22,6 +22,7 @@ contracts/
   README.md
   common-conventions.md
   jwt-conventions.md
+  operational-endpoints.md
   common/
     components.yaml
   services/
@@ -52,6 +53,7 @@ contracts/
 - OpenAPI 버전은 `3.1.0`을 사용한다.
 - 인증은 `Authorization: Bearer <JWT>`를 기본으로 한다.
 - JWT 발급, 검증, role, claim 규칙은 `jwt-conventions.md`를 따른다.
+- `/healthz`, `/readyz`, `/metrics` 운영 엔드포인트는 `operational-endpoints.md`를 따른다.
 - ID 타입은 모두 `string`으로 둔다.
 - 목록 API는 `limit`, `cursor` 기반 페이지네이션을 사용한다.
 - 생성/상태 변경 API는 중복 요청 방지가 필요하면 `Idempotency-Key`를 받는다.
