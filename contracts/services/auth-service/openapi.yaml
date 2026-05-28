@@ -15,6 +15,16 @@ paths:
     $ref: ./paths/auth_login.yaml
   /auth/refresh:
     $ref: ./paths/auth_refresh.yaml
+  /auth/me:
+    $ref: ./paths/auth_me.yaml
+  /auth/logout:
+    $ref: ./paths/auth_logout.yaml
+  /healthz:
+    $ref: ./paths/healthz.yaml
+  /readyz:
+    $ref: ./paths/readyz.yaml
+  /metrics:
+    $ref: ./paths/metrics.yaml
 
 components:
   securitySchemes:
@@ -30,8 +40,9 @@ components:
       properties:
         email:
           type: string
+          format: email
           examples:
-            - user@example.com
+            - customer@example.com
         password:
           type: string
           format: password
@@ -42,6 +53,13 @@ components:
       properties:
         refreshToken:
           type: string
+    LogoutRequest:
+      type: object
+      properties:
+        refreshToken:
+          type:
+            - string
+            - "null"
     UserResponse:
       type: object
       required:
@@ -56,24 +74,15 @@ components:
           type: string
         email:
           type: string
+          format: email
           examples:
-            - user@example.com
+            - customer@example.com
         displayName:
           type: string
           examples:
-            - Lee Seoyeon
+            - Kim Ticket
         role:
           $ref: ../../common/components.yaml#/components/schemas/UserRole
-        providerId:
-          type:
-            - string
-            - "null"
-          description: Present when the authenticated user belongs to a concert provider.
-        adminId:
-          type:
-            - string
-            - "null"
-          description: Present when the authenticated user belongs to platform operations.
         isActive:
           type: boolean
         createdAt:
@@ -91,7 +100,7 @@ components:
       properties:
         accessToken:
           type: string
-          description: HS256 JWT matching the common JwtAccessTokenClaims payload contract, including the USER, PROVIDER, or ADMIN role claim.
+          description: HS256 JWT matching the common JwtAccessTokenClaims payload contract, including the CUSTOMER, PROVIDER, or ADMIN role claim.
         refreshToken:
           type: string
           description: Opaque refresh token string.
@@ -109,3 +118,47 @@ components:
           description: Refresh token lifetime in seconds.
         user:
           $ref: "#/components/schemas/UserResponse"
+    StatusResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          examples:
+            - ok
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - service
+      properties:
+        status:
+          type: string
+          examples:
+            - ok
+        service:
+          type: string
+          examples:
+            - auth-service
+    ReadinessResponse:
+      type: object
+      required:
+        - status
+        - service
+        - checks
+      properties:
+        status:
+          type: string
+          examples:
+            - ready
+        service:
+          type: string
+          examples:
+            - auth-service
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+          examples:
+            - database: ok

@@ -1,26 +1,24 @@
 post:
-  tags:
-    - Auth API
-  summary: Refresh access token
-  operationId: authRefreshToken
+  summary: Logout
+  operationId: logout
+  security:
+    - BearerAuth: []
   parameters:
     - $ref: ../../../common/components.yaml#/components/parameters/X-Request-Id
     - $ref: ../../../common/components.yaml#/components/parameters/X-Trace-Id
   requestBody:
-    required: true
+    required: false
     content:
       application/json:
         schema:
-          $ref: ../openapi.yaml#/components/schemas/RefreshTokenRequest
+          $ref: ../openapi.yaml#/components/schemas/LogoutRequest
   responses:
     "200":
-      description: Auth tokens refreshed.
+      description: Access token revoked and refresh token revoked when provided.
       content:
         application/json:
           schema:
-            $ref: ../openapi.yaml#/components/schemas/TokenResponse
-    "400":
-      $ref: ../../../common/components.yaml#/components/responses/BadRequest
+            $ref: ../openapi.yaml#/components/schemas/StatusResponse
     "401":
       $ref: ../../../common/components.yaml#/components/responses/Unauthorized
     "422":

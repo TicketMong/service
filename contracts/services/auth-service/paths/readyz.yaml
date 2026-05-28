@@ -1,0 +1,12 @@
+get:
+  summary: Readiness check
+  operationId: readyz
+  responses:
+    "200":
+      description: Service is ready to receive traffic.
+      content:
+        application/json:
+          schema:
+            $ref: ../openapi.yaml#/components/schemas/ReadinessResponse
+    "500":
+      $ref: ../../../common/components.yaml#/components/responses/InternalServerError
