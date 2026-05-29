@@ -2,11 +2,13 @@
   "info": {
     "_postman_id": "b1efed55-9028-4497-a779-d01aaebc5e20",
     "name": "02 Reservation Create",
+    "description": "Validates the reservation-service create path from a client-facing scenario: prepare reservation identifiers, open sales, create a reservation, and confirm it appears in the user's reservation list.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
     {
       "name": "Prepare reservation inputs",
+      "description": "Ensures the reservation scenario has concertId, showtimeId, seatId, and userId values available.",
       "event": [
         {
           "listen": "prerequest",
@@ -49,6 +51,7 @@
     },
     {
       "name": "Start sales",
+      "description": "Opens sales for the concert so the reservation request can be accepted.",
       "request": {
         "method": "POST",
         "header": [],
@@ -73,6 +76,7 @@
     },
     {
       "name": "Create reservation",
+      "description": "Creates a pending reservation for one seat and stores reservationId.",
       "request": {
         "method": "POST",
         "header": [
@@ -115,6 +119,7 @@
     },
     {
       "name": "List my reservations",
+      "description": "Confirms the created reservation is visible from the user's reservation list.",
       "request": {
         "method": "GET",
         "header": [

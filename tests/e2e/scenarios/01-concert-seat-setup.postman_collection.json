@@ -2,11 +2,13 @@
   "info": {
     "_postman_id": "a3f5e67c-564b-43d0-b6ac-1a07a6d6d5c8",
     "name": "01 Concert Seat Setup",
+    "description": "Validates the front-most concert setup flow: provider venue, concert, showtime, seat map upload, and public performance/seat lookup. Stores concertId, showtimeId, and seatId for later reservation scenarios.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
     {
       "name": "Create venue",
+      "description": "Creates a provider venue that the concert showtime can reference.",
       "request": {
         "method": "POST",
         "header": [
@@ -40,6 +42,7 @@
     },
     {
       "name": "Create concert draft",
+      "description": "Creates the provider-owned concert draft and stores concertId.",
       "request": {
         "method": "POST",
         "header": [
@@ -78,6 +81,7 @@
     },
     {
       "name": "Create showtime",
+      "description": "Creates the concrete performance time for the concert and stores showtimeId.",
       "event": [
         {
           "listen": "prerequest",
@@ -123,6 +127,7 @@
     },
     {
       "name": "Upload seat map",
+      "description": "Uploads the seat map for the showtime. The following public seat lookup stores the first seatId.",
       "request": {
         "method": "POST",
         "header": [
@@ -153,6 +158,7 @@
     },
     {
       "name": "List public performances",
+      "description": "Verifies that the prepared showtime is exposed through the public concert performance lookup.",
       "request": {
         "method": "GET",
         "header": [],
@@ -179,6 +185,7 @@
     },
     {
       "name": "List public seats",
+      "description": "Verifies that public seat lookup returns the uploaded seats for the showtime and stores seatId.",
       "request": {
         "method": "GET",
         "header": [],
