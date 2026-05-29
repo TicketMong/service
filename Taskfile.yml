@@ -78,6 +78,13 @@ tasks:
         vars:
           SERVICE: '{{default "" .SERVICE}}'
 
+  test-services:
+    desc: Run selected service pytest suites in parallel with SERVICES="<service-names>".
+    cmds:
+      - task: tests:test-services
+        vars:
+          SERVICES: '{{default "" .SERVICES}}'
+
   test-unit:
     desc: Run all managed service pytest suites in the Docker Python runner.
     cmds:

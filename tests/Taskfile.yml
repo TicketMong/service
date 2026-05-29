@@ -22,14 +22,20 @@ tasks:
       - docker build -f "{{.ROOT_DIR}}/tests/docker/Dockerfile" -t {{.TEST_RUNNER_IMAGE}} "{{.ROOT_DIR}}"
 
   test-service:
+    cmds:
+      - task: test-services
+        vars:
+          SERVICES: '{{default "" .SERVICE}}'
+
+  test-services:
     deps:
       - test-runner-build
     cmds:
       - |
         set -eu
-        requested='{{default "" .SERVICE}}'
-        if [ -z "${requested}" ]; then
-          printf '%s\n' 'SERVICE is required, for example: task test-service SERVICE=auth-service' >&2
+        requested_services='{{default "" .SERVICES}}'
+        if [ -z "${requested_services}" ]; then
+          printf '%s\n' 'SERVICES is required, for example: task test-services SERVICES="auth-service ticket-service"' >&2
           exit 2
         fi
         normalize_service() {
@@ -43,33 +49,43 @@ tasks:
             *) return 1 ;;
           esac
         }
-        if ! service="$(normalize_service "${requested}")"; then
-          printf 'Unknown SERVICE=%s (expected one of: {{.TEST_SERVICES}}).\n' "${requested}" >&2
-          exit 2
-        fi
+        services=""
+        for requested in ${requested_services}; do
+          if ! service="$(normalize_service "${requested}")"; then
+            printf 'Unknown SERVICE=%s (expected one of: {{.TEST_SERVICES}}).\n' "${requested}" >&2
+            exit 2
+          fi
+          case " ${services} " in
+            *" ${service} "*) ;;
+            *) services="${services} ${service}" ;;
+          esac
+        done
         repo_root="$(cd "{{.ROOT_DIR}}" && pwd -P)"
-        printf '%s\n' "Running pytest for services/${service}"
-        docker run --rm \
-          -v "${repo_root}":/workspace \
-          -w "/workspace/services/${service}" \
-          {{.TEST_RUNNER_IMAGE}} \
-          sh -c "PYTHONPATH=. /opt/test-envs/${service}/bin/python -m pytest {{.PYTEST_ARGS}}"
+        pids=""
+        failed=0
+        for service in ${services}; do
+          (
+            printf '%s\n' "Running pytest for services/${service}"
+            docker run --rm \
+              -v "${repo_root}":/workspace \
+              -w "/workspace/services/${service}" \
+              {{.TEST_RUNNER_IMAGE}} \
+              sh -c "PYTHONPATH=. /opt/test-envs/${service}/bin/python -m pytest {{.PYTEST_ARGS}}"
+          ) &
+          pids="${pids} $!"
+        done
+        for pid in ${pids}; do
+          if ! wait "${pid}"; then
+            failed=1
+          fi
+        done
+        exit "${failed}"
 
   test-unit:
-    deps:
-      - test-runner-build
     cmds:
-      - |
-        set -eu
-        repo_root="$(cd "{{.ROOT_DIR}}" && pwd -P)"
-        for service in {{.TEST_SERVICES}}; do
-          printf '%s\n' "Running pytest for services/${service}"
-          docker run --rm \
-            -v "${repo_root}":/workspace \
-            -w "/workspace/services/${service}" \
-            {{.TEST_RUNNER_IMAGE}} \
-            sh -c "PYTHONPATH=. /opt/test-envs/${service}/bin/python -m pytest {{.PYTEST_ARGS}}"
-        done
+      - task: test-services
+        vars:
+          SERVICES: '{{.TEST_SERVICES}}'
 
   test-e2e:
     cmds:

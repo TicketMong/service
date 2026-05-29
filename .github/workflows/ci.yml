@@ -69,24 +69,29 @@ jobs:
           printf 'Selected services: %s\n' "${services}"
 
   service-unit:
-    name: Unit ${{ matrix.service }}
+    name: Service unit tests
     needs: detect-services
     if: needs.detect-services.outputs.count != '0'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        service: ${{ fromJson(needs.detect-services.outputs.services) }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install Task
-        uses: arduino/setup-task@v2
+        uses: go-task/setup-task@v2
+        with:
+          repo-token: ${{ github.token }}
 
       - name: Run service unit tests in Docker
-        run: task test-service SERVICE=${{ matrix.service }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          services="$(jq -r 'join(" ")' <<'JSON'
+          ${{ needs.detect-services.outputs.services }}
+          JSON
+          )"
+          task test-services SERVICES="${services}"
 
   no-service-unit:
     name: No service unit tests

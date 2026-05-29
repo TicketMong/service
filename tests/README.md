@@ -56,6 +56,12 @@ task test-service SERVICE=auth-service
 task test-service SERVICE=auth
 ```
 
+여러 서비스만 골라서 확인할 때는 테스트 러너 이미지를 한 번 준비한 뒤 선택된 서비스 테스트를 병렬로 실행한다.
+
+```bash
+task test-services SERVICES="auth-service ticket-service"
+```
+
 ## E2E 테스트 흐름
 
 Newman 컬렉션은 Docker Compose 네트워크 DNS로 각 서비스를 직접 호출해 다음 흐름을 검증한다. Kong/JWT/Ingress는 기본 `task test-e2e` 범위가 아니며, 서비스가 기대하는 `X-User-*` 헤더를 요청에 직접 넣는다.
@@ -98,7 +104,7 @@ task e2e-down
 
 ## CI
 
-`.github/workflows/ci.yml`은 PR 변경 경로를 기준으로 서비스별 matrix를 만든 뒤 `task test-service SERVICE=<service>`를 실행한다. `services/<service>/**` 변경은 해당 서비스만 실행하고, `tests/**`, `packages/**`, `Taskfile.yml`, `.github/workflows/ci.yml` 변경은 6개 서비스 전체를 실행한다. `contracts/**`만 변경된 경우에는 서비스 테스트 없이 no-op 성공 job으로 끝난다.
+`.github/workflows/ci.yml`은 PR 변경 경로를 기준으로 테스트할 서비스 목록을 만든 뒤 `task test-services SERVICES="<services>"`를 한 번 실행한다. 테스트 러너 이미지는 한 번 빌드하고, 선택된 서비스 pytest 컨테이너는 병렬로 실행한다. `services/<service>/**` 변경은 해당 서비스만 실행하고, `tests/**`, `packages/**`, `Taskfile.yml`, `.github/workflows/ci.yml` 변경은 6개 서비스 전체를 실행한다. `contracts/**`만 변경된 경우에는 서비스 테스트 없이 no-op 성공 job으로 끝난다.
 
 `.github/workflows/e2e.yml`은 `main` push와 수동 실행에서만 `task test-e2e`를 실행한다. GitHub runner 안에서 Docker Compose 기반 PostgreSQL/MongoDB/Kafka E2E stack과 Newman을 함께 실행한다.
 
