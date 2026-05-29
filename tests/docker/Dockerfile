@@ -35,9 +35,19 @@ RUN python -m pip install --no-cache-dir --root-user-action=ignore --upgrade pip
       UV_PROJECT_ENVIRONMENT="/opt/test-envs/${service}" \
         uv sync --frozen --project "services/${service}" --group test --no-install-project; \
     } \
+    && install_pytest_cov() { \
+      service="$1"; \
+      uv pip install --python "/opt/test-envs/${service}/bin/python" pytest-cov; \
+    } \
     && install_requirements_service auth-service \
+    && install_pytest_cov auth-service \
     && install_uv_service concert-service \
+    && install_pytest_cov concert-service \
     && install_requirements_service notification-service \
+    && install_pytest_cov notification-service \
     && install_requirements_service payment-service \
+    && install_pytest_cov payment-service \
     && install_uv_service reservation-service \
-    && install_requirements_service ticket-service
+    && install_pytest_cov reservation-service \
+    && install_requirements_service ticket-service \
+    && install_pytest_cov ticket-service

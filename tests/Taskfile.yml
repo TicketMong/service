@@ -5,6 +5,7 @@ vars:
   TEST_RUNNER_IMAGE: '{{default "medical-platform-python-test-runner:local" .TEST_RUNNER_IMAGE}}'
   PYTEST_ARGS: '{{default "-q -s -p no:cacheprovider" .PYTEST_ARGS}}'
   TEST_SERVICES: auth-service concert-service notification-service payment-service reservation-service ticket-service
+  UNIT_REPORT_DIR: '{{default "tests/tmp/reports/unit" .UNIT_REPORT_DIR}}'
   DOCKER_COMPOSE: '{{default "docker compose" .DOCKER_COMPOSE}}'
   E2E_COMPOSE_FILE: '{{default "tests/e2e/docker-compose.yml" .E2E_COMPOSE_FILE}}'
   E2E_COMPOSE_PROJECT: '{{default "medical-platform-e2e" .E2E_COMPOSE_PROJECT}}'
@@ -61,16 +62,44 @@ tasks:
           esac
         done
         repo_root="$(cd "{{.ROOT_DIR}}" && pwd -P)"
+        reports_root="${repo_root}/{{.UNIT_REPORT_DIR}}"
+        rm -rf "${reports_root}"
+        mkdir -p "${reports_root}"
         pids=""
         failed=0
         for service in ${services}; do
           (
-            printf '%s\n' "Running pytest for services/${service}"
+            report_dir="${reports_root}/${service}"
+            rm -rf "${report_dir}"
+            mkdir -p "${report_dir}"
+            started_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+            started_epoch="$(date +%s)"
+            exit_code=0
+            status=passed
+            set +e
             docker run --rm \
               -v "${repo_root}":/workspace \
               -w "/workspace/services/${service}" \
               {{.TEST_RUNNER_IMAGE}} \
-              sh -c "PYTHONPATH=. /opt/test-envs/${service}/bin/python -m pytest {{.PYTEST_ARGS}}"
+              sh -c "COVERAGE_FILE=/workspace/{{.UNIT_REPORT_DIR}}/${service}/.coverage PYTHONPATH=. /opt/test-envs/${service}/bin/python -m pytest {{.PYTEST_ARGS}} --junitxml=/workspace/{{.UNIT_REPORT_DIR}}/${service}/junit.xml --cov=app --cov-report=term-missing --cov-report=xml:/workspace/{{.UNIT_REPORT_DIR}}/${service}/coverage.xml --cov-report=html:/workspace/{{.UNIT_REPORT_DIR}}/${service}/htmlcov" \
+              > "${report_dir}/pytest.log" 2>&1
+            exit_code="$?"
+            set -e
+            if [ "${exit_code}" -ne 0 ]; then
+              status=failed
+            fi
+            finished_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+            finished_epoch="$(date +%s)"
+            duration_seconds="$((finished_epoch - started_epoch))"
+            python3 "{{.ROOT_DIR}}/tests/scripts/unit_report_summary.py" service \
+              --service "${service}" \
+              --report-dir "${report_dir}" \
+              --status "${status}" \
+              --exit-code "${exit_code}" \
+              --started-at "${started_at}" \
+              --finished-at "${finished_at}" \
+              --duration-seconds "${duration_seconds}"
+            exit "${exit_code}"
           ) &
           pids="${pids} $!"
         done
@@ -79,6 +108,7 @@ tasks:
             failed=1
           fi
         done
+        python3 "{{.ROOT_DIR}}/tests/scripts/unit_report_summary.py" aggregate --reports-root "${reports_root}"
         exit "${failed}"
 
   test-unit:

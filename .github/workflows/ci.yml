@@ -93,6 +93,22 @@ jobs:
           )"
           task test-services SERVICES="${services}"
 
+      - name: Append unit test summary
+        if: always()
+        shell: bash
+        run: |
+          if [ -f tests/tmp/reports/unit/summary.md ]; then
+            cat tests/tmp/reports/unit/summary.md >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload unit test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: tests/tmp/reports/unit/
+          if-no-files-found: ignore
+
   no-service-unit:
     name: No service unit tests
     needs: detect-services

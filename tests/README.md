@@ -62,6 +62,8 @@ task test-service SERVICE=auth
 task test-services SERVICES="auth-service ticket-service"
 ```
 
+단위 테스트 리포트는 실행할 때마다 `tests/tmp/reports/unit/<service>/` 아래에 서비스별로 생성된다. 실패 원인과 assertion diff는 `pytest.log`에서 확인하고, CI 테스트 요약 도구는 `junit.xml`을 사용할 수 있다. Coverage는 `coverage.xml`과 `htmlcov/`로 남기지만 현재 단계에서는 coverage threshold로 CI를 실패시키지 않는다. 서비스별 `summary.json`과 전체 `tests/tmp/reports/unit/summary.json`에는 테스트 총계, 성공, 실패, 에러, skip, coverage 수치가 기록된다.
+
 ## E2E 테스트 흐름
 
 Newman 컬렉션은 Docker Compose 네트워크 DNS로 각 서비스를 직접 호출해 다음 흐름을 검증한다. Kong/JWT/Ingress는 기본 `task test-e2e` 범위가 아니며, 서비스가 기대하는 `X-User-*` 헤더를 요청에 직접 넣는다.
@@ -105,6 +107,8 @@ task e2e-down
 ## CI
 
 `.github/workflows/ci.yml`은 PR 변경 경로를 기준으로 테스트할 서비스 목록을 만든 뒤 `task test-services SERVICES="<services>"`를 한 번 실행한다. 테스트 러너 이미지는 한 번 빌드하고, 선택된 서비스 pytest 컨테이너는 병렬로 실행한다. `services/<service>/**` 변경은 해당 서비스만 실행하고, `tests/**`, `packages/**`, `Taskfile.yml`, `.github/workflows/ci.yml` 변경은 6개 서비스 전체를 실행한다. `contracts/**`만 변경된 경우에는 서비스 테스트 없이 no-op 성공 job으로 끝난다.
+
+CI는 단위 테스트 성공/실패와 관계없이 `unit-test-reports` artifact를 업로드한다. artifact 안의 `tests/tmp/reports/unit/<service>/summary.json`에는 서비스명, 성공/실패 상태, exit code, 시작/종료 시각, 실행 시간과 테스트 메트릭이 기록된다. GitHub Actions summary에는 `tests/tmp/reports/unit/summary.md`의 전체 단위 테스트 표가 표시된다.
 
 `.github/workflows/e2e.yml`은 `main` push와 수동 실행에서만 `task test-e2e`를 실행한다. GitHub runner 안에서 Docker Compose 기반 PostgreSQL/MongoDB/Kafka E2E stack과 Newman을 함께 실행한다.
 
