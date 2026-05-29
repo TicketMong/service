@@ -16,8 +16,62 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  pytest:
-    name: Docker pytest
+  detect-services:
+    name: Detect service test scope
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.matrix.outputs.services }}
+      count: ${{ steps.matrix.outputs.count }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed paths
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            auth-service:
+              - 'services/auth-service/**'
+            concert-service:
+              - 'services/concert-service/**'
+            notification-service:
+              - 'services/notification-service/**'
+            payment-service:
+              - 'services/payment-service/**'
+            reservation-service:
+              - 'services/reservation-service/**'
+            ticket-service:
+              - 'services/ticket-service/**'
+            common:
+              - 'tests/**'
+              - 'packages/**'
+              - 'Taskfile.yml'
+              - '.github/workflows/ci.yml'
+
+      - name: Build test matrix
+        id: matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          all_services='["auth-service","concert-service","notification-service","payment-service","reservation-service","ticket-service"]'
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "${{ steps.changes.outputs.common }}" = "true" ]; then
+            services="${all_services}"
+          else
+            services="$(jq -c '[.[] | select(. != "common")]' <<<'${{ steps.changes.outputs.changes }}')"
+          fi
+          count="$(jq 'length' <<<"${services}")"
+          printf 'services=%s\n' "${services}" >> "${GITHUB_OUTPUT}"
+          printf 'count=%s\n' "${count}" >> "${GITHUB_OUTPUT}"
+          printf 'Selected services: %s\n' "${services}"
+
+  service-unit:
+    name: Service unit tests
+    needs: detect-services
+    if: needs.detect-services.outputs.count != '0'
     runs-on: ubuntu-latest
 
     steps:
@@ -25,7 +79,42 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Task
-        uses: arduino/setup-task@v2
+        uses: go-task/setup-task@v2
+        with:
+          repo-token: ${{ github.token }}
 
-      - name: Run unit tests in Docker
-        run: task test-unit
+      - name: Run service unit tests in Docker
+        shell: bash
+        run: |
+          set -euo pipefail
+          services="$(jq -r 'join(" ")' <<'JSON'
+          ${{ needs.detect-services.outputs.services }}
+          JSON
+          )"
+          task test-services SERVICES="${services}"
+
+      - name: Append unit test summary
+        if: always()
+        shell: bash
+        run: |
+          if [ -f tests/tmp/reports/unit/summary.md ]; then
+            cat tests/tmp/reports/unit/summary.md >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload unit test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: tests/tmp/reports/unit/
+          if-no-files-found: ignore
+
+  no-service-unit:
+    name: No service unit tests
+    needs: detect-services
+    if: needs.detect-services.outputs.count == '0'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Report no-op
+        run: echo "No managed service unit tests selected for this change."
