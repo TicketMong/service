@@ -1,5 +1,7 @@
 from collections.abc import Generator
+import time
 
+from sqlalchemy.exc import OperationalError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -29,4 +31,13 @@ def get_db() -> Generator[Session, None, None]:
 def init_db() -> None:
     from app import entities  # noqa: F401
 
-    Base.metadata.create_all(bind=engine)
+    last_error: OperationalError | None = None
+    for _ in range(10):
+        try:
+            Base.metadata.create_all(bind=engine)
+            return
+        except OperationalError as exc:
+            last_error = exc
+            time.sleep(1)
+    if last_error is not None:
+        raise last_error

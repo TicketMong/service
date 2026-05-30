@@ -6,6 +6,7 @@ vars:
   PYTEST_ARGS: '{{default "-q -s -p no:cacheprovider" .PYTEST_ARGS}}'
   TEST_SERVICES: auth-service concert-service notification-service payment-service reservation-service ticket-service
   UNIT_REPORT_DIR: '{{default "tests/tmp/reports/unit" .UNIT_REPORT_DIR}}'
+  PYTHON_BIN: '{{default "python" .PYTHON_BIN}}'
   DOCKER_COMPOSE: '{{default "docker compose" .DOCKER_COMPOSE}}'
   E2E_COMPOSE_FILE: '{{default "tests/e2e/docker-compose.yml" .E2E_COMPOSE_FILE}}'
   E2E_COMPOSE_PROJECT: '{{default "ticketing-e2e" .E2E_COMPOSE_PROJECT}}'
@@ -67,6 +68,13 @@ tasks:
         reports_root="${repo_root}/{{.UNIT_REPORT_DIR}}"
         rm -rf "${reports_root}"
         mkdir -p "${reports_root}"
+        python_bin='{{.PYTHON_BIN}}'
+        utc_now() {
+          "${python_bin}" -c 'from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))'
+        }
+        epoch_now() {
+          "${python_bin}" -c 'import time; print(int(time.time()))'
+        }
         pids=""
         failed=0
         for service in ${services}; do
@@ -74,8 +82,8 @@ tasks:
             report_dir="${reports_root}/${service}"
             rm -rf "${report_dir}"
             mkdir -p "${report_dir}"
-            started_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-            started_epoch="$(date +%s)"
+            started_at="$(utc_now)"
+            started_epoch="$(epoch_now)"
             exit_code=0
             status=passed
             set +e
@@ -90,10 +98,10 @@ tasks:
             if [ "${exit_code}" -ne 0 ]; then
               status=failed
             fi
-            finished_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-            finished_epoch="$(date +%s)"
+            finished_at="$(utc_now)"
+            finished_epoch="$(epoch_now)"
             duration_seconds="$((finished_epoch - started_epoch))"
-            python3 "{{.ROOT_DIR}}/tests/scripts/unit_report_summary.py" service \
+            "${python_bin}" "{{.ROOT_DIR}}/tests/scripts/unit_report_summary.py" service \
               --service "${service}" \
               --report-dir "${report_dir}" \
               --status "${status}" \
@@ -110,7 +118,7 @@ tasks:
             failed=1
           fi
         done
-        python3 "{{.ROOT_DIR}}/tests/scripts/unit_report_summary.py" aggregate --reports-root "${reports_root}"
+        "${python_bin}" "{{.ROOT_DIR}}/tests/scripts/unit_report_summary.py" aggregate --reports-root "${reports_root}"
         exit "${failed}"
 
   test-unit:

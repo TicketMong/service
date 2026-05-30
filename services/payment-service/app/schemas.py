@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class CreatePaymentRequest(BaseModel):
     reservationId: str
     concertId: str = "unknown"
+    seatId: str | None = None
     amount: int = Field(ge=0)
     method: str
     simulation: str = "approve"

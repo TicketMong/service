@@ -1,12 +1,21 @@
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+from app.routers import reservations as reservation_router
 
 
-def test_reservation_create_list_cancel_and_expire_conflict_flow() -> None:
+def test_reservation_create_list_cancel_and_expire_conflict_flow(monkeypatch: pytest.MonkeyPatch) -> None:
     """예약 생성, 중복 예약 충돌, 목록 조회, 취소 후 만료 실패 흐름을 API 레벨에서 검증한다."""
+    published: list[tuple[str, dict]] = []
+
+    async def fake_publish(topic: str, payload: dict) -> bool:
+        published.append((topic, payload))
+        return True
+
+    monkeypatch.setattr(reservation_router.kafka, "publish_event", fake_publish)
     client = TestClient(create_app())
     suffix = uuid4().hex[:8]
     concert_id = f"concert-api-flow-{suffix}"
@@ -32,6 +41,38 @@ def test_reservation_create_list_cancel_and_expire_conflict_flow() -> None:
     assert listed["items"][0]["id"] == created["id"]
     assert canceled["status"] == "canceled"
     assert expire_after_cancel.status_code == 409
+    assert published[0][0] == "reservation-created"
+    assert published[0][1]["reservationId"] == created["id"]
+
+
+def test_reservation_expire_publishes_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    """예약 만료 시 알림 서비스가 소비할 reservation-expired 이벤트를 발행한다."""
+    published: list[tuple[str, dict]] = []
+
+    async def fake_publish(topic: str, payload: dict) -> bool:
+        published.append((topic, payload))
+        return True
+
+    monkeypatch.setattr(reservation_router.kafka, "publish_event", fake_publish)
+    client = TestClient(create_app())
+    suffix = uuid4().hex[:8]
+
+    created = client.post(
+        "/reservations",
+        json={
+            "concertId": f"concert-expire-{suffix}",
+            "showtimeId": f"showtime-expire-{suffix}",
+            "performanceId": f"perf-expire-{suffix}",
+            "seatId": "A-2",
+        },
+        headers={"X-User-Id": "1"},
+    ).json()
+
+    expired = client.post(f"/reservations/{created['id']}/expire").json()
+
+    assert expired["status"] == "expired"
+    assert [item[0] for item in published] == ["reservation-created", "reservation-expired"]
+    assert published[1][1]["reservationId"] == created["id"]
 
 
 def test_sales_and_policy_admin_flow() -> None:

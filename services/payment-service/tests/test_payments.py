@@ -1,12 +1,7 @@
-import base64
-import hashlib
-import hmac
-import json
 import os
-import time
 from pathlib import Path
-from uuid import uuid4
 
+import pytest
 
 Path("test_payment_service.db").unlink(missing_ok=True)
 os.environ["DATABASE_URL"] = "sqlite:///./test_payment_service.db"
@@ -15,6 +10,7 @@ os.environ["JWT_SECRET"] = "ticketing-dev-secret"
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.database import SessionLocal  # noqa: E402
+import app.main as payment_app  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import PaymentEvent  # noqa: E402
 
@@ -22,7 +18,14 @@ from app.models import PaymentEvent  # noqa: E402
 client = TestClient(app)
 
 
-def test_create_and_get_approved_payment() -> None:
+def test_create_and_get_approved_payment(monkeypatch: pytest.MonkeyPatch) -> None:
+    published: list[tuple[str, dict]] = []
+
+    async def fake_publish(topic: str, payload: dict) -> bool:
+        published.append((topic, payload))
+        return True
+
+    monkeypatch.setattr(payment_app.kafka, "publish_event", fake_publish)
     headers = auth_headers("CUSTOMER", user_id="1")
     response = client.post(
         "/payments",
@@ -30,6 +33,7 @@ def test_create_and_get_approved_payment() -> None:
         json={
             "reservationId": "res-1",
             "concertId": "concert-1",
+            "seatId": "seat-A1",
             "amount": 50000,
             "method": "mock",
             "simulation": "approve",
@@ -43,6 +47,9 @@ def test_create_and_get_approved_payment() -> None:
     assert payment["status"] == "approved"
     assert payment["approvedAt"] is not None
     assert payment_events() == ["payment-approved"]
+    assert published[0][0] == "payment-approved"
+    assert published[0][1]["reservationId"] == "res-1"
+    assert published[0][1]["seatId"] == "seat-A1"
 
     get_response = client.get(f"/payments/{payment['id']}", headers=headers)
     assert get_response.status_code == 200
@@ -154,38 +161,14 @@ def test_operational_endpoints_and_error_shape() -> None:
 
 
 def auth_headers(role: str, user_id: str = "1") -> dict[str, str]:
-    now = int(time.time())
-    payload = {
-        "iss": "auth-service",
-        "sub": user_id,
-        "email": f"{role.lower()}@example.com",
-        "role": role,
-        "iat": now,
-        "exp": now + 900,
-        "jti": str(uuid4()),
+    return {
+        "X-User-Id": user_id,
+        "X-User-Email": f"{role.lower()}@example.com",
+        "X-User-Role": role,
+        "X-Token-Id": f"token-{user_id}",
     }
-    token = sign_jwt(payload, "ticketing-dev-secret")
-    return {"Authorization": f"Bearer {token}"}
 
 
 def payment_events() -> list[str]:
     with SessionLocal() as db:
         return [event.event_type for event in db.query(PaymentEvent).order_by(PaymentEvent.created_at).all()]
-
-
-def sign_jwt(payload: dict, secret: str) -> str:
-    header = {"alg": "HS256", "typ": "JWT"}
-    header_part = b64url_json(header)
-    payload_part = b64url_json(payload)
-    signature_part = b64url(
-        hmac.new(secret.encode("utf-8"), f"{header_part}.{payload_part}".encode("ascii"), hashlib.sha256).digest()
-    )
-    return f"{header_part}.{payload_part}.{signature_part}"
-
-
-def b64url_json(value: dict) -> str:
-    return b64url(json.dumps(value, separators=(",", ":")).encode("utf-8"))
-
-
-def b64url(value: bytes) -> str:
-    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")

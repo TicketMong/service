@@ -19,6 +19,15 @@ async def issue_ticket(
     return await ticket_service.issue_ticket(db, request)
 
 
+# 내 티켓 목록 조회
+@router.get("/me", response_model=list[TicketResponse])
+def list_my_tickets(
+    db: Session = Depends(get_db),
+    user: UserContext = Depends(get_user_context),
+) -> list[TicketResponse]:
+    return ticket_service.list_my_tickets(db, user)
+
+
 # 티켓 상세 조회
 @router.get("/{ticket_id}", response_model=TicketResponse)
 def get_ticket(
@@ -27,12 +36,3 @@ def get_ticket(
     user: UserContext = Depends(get_user_context),
 ) -> TicketResponse:
     return ticket_service.get_ticket(db, ticket_id, user)
-
-
-# 내 티켓 목록 조회
-@router.get("/me", response_model=list[TicketResponse])
-def list_my_tickets(
-    db: Session = Depends(get_db),
-    user: UserContext = Depends(get_user_context),
-) -> list[TicketResponse]:
-    return ticket_service.list_my_tickets(db, user)

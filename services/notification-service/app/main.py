@@ -1,7 +1,9 @@
 import asyncio
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
 from app.config import settings
 from app.consumers.kafka_consumer import consume_events
 from app.database import connect_db, close_db
@@ -49,5 +51,5 @@ def readyz() -> dict[str, str]:
 
 # Prometheus 메트릭 (observability.py에서 설정)
 @app.get("/metrics")
-def metrics() -> dict[str, str]:
-    return {"status": "ok"}
+def metrics() -> Response:
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
