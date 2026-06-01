@@ -9,7 +9,7 @@
 | 구분 | 도구 | 대상 |
 | --- | --- | --- |
 | 단위 테스트 | Docker Python pytest 러너 | `auth-service`, `concert-service`, `notification-service`, `payment-service`, `reservation-service`, `ticket-service` |
-| E2E 테스트 | Docker Compose, PostgreSQL, MongoDB, Kafka, Docker curl/Newman 컨테이너 | 서비스 DNS 직접 호출로 환자 생성, 예약 확정, 이벤트 발행/소비, 알림 저장, 처방 발행 흐름 |
+| E2E 테스트 | Docker Compose, PostgreSQL, MongoDB, Kafka, Docker curl/Newman 컨테이너 | 시나리오 파일 단위로 서비스 DNS를 직접 호출해 검증 |
 | Gateway E2E | 별도 future scope | Kong/JWT/Ingress 라우팅과 MetalLB 노출 검증 |
 
 ## 폴더 구조
@@ -20,6 +20,9 @@ tests/
     Dockerfile
   e2e/
     docker-compose.yml
+    scenarios/
+      01-concert-seat-setup.postman_collection.json
+      02-reservation-create.postman_collection.json
     postman/
       medical-platform.postman_collection.json
     postgres-init/
@@ -89,19 +92,21 @@ task test-e2e
 | 서비스 | 기본 URL |
 | --- | --- |
 | `patient-service` | `http://patient-service:8081` |
+| `concert-service` | `http://concert-service:8082` |
+| `reservation-service` | `http://reservation-service:8083` |
+| `payment-service` | `http://payment-service:8080` |
+| `ticket-service` | `http://ticket-service:8085` |
 | `appointment-service` | `http://appointment-service:8082` |
 | `prescription-service` | `http://prescription-service:8083` |
 | `notification-service` | `http://notification-service:8084` |
 
 `tests/e2e/scripts/wait-for-services.sh`는 Docker curl 컨테이너 안에서 실행된다. Newman 컬렉션도 Docker Newman 컨테이너 안에서 실행되므로 로컬에 curl이나 newman을 따로 설치하지 않는다.
 
-수동으로 stack을 살펴보려면 다음 명령을 사용한다.
+첫 티켓팅 E2E 시나리오는 공연, 회차, 좌석 준비를 하나의 검증 단위로 분리해 실행한다.
 
 ```bash
-task e2e-up
-task e2e-wait
-task e2e-newman
-task e2e-down
+task test-e2e SCENARIO=01-concert-seat-setup
+task test-e2e SCENARIO=02-reservation-create
 ```
 
 ## CI
