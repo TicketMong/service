@@ -23,8 +23,7 @@ tests/
     scenarios/
       01-concert-seat-setup.postman_collection.json
       02-reservation-create.postman_collection.json
-    postman/
-      medical-platform.postman_collection.json
+      03-ticket-issue.postman_collection.json
     postgres-init/
       01-create-databases.sql
     newman/
@@ -69,15 +68,13 @@ task test-services SERVICES="auth-service ticket-service"
 
 ## E2E 테스트 흐름
 
-Newman 컬렉션은 Docker Compose 네트워크 DNS로 각 서비스를 직접 호출해 다음 흐름을 검증한다. Kong/JWT/Ingress는 기본 `task test-e2e` 범위가 아니며, 서비스가 기대하는 `X-User-*` 헤더를 요청에 직접 넣는다.
+Newman 컬렉션은 Docker Compose 네트워크 DNS로 각 서비스를 직접 호출한다. Kong/JWT/Ingress는 기본 `task test-e2e` 범위가 아니며, 서비스가 기대하는 `X-User-*` 헤더를 요청에 직접 넣는다.
 
-1. `STAFF` 사용자 헤더로 `patient-service`의 `POST /patients`를 호출해 환자를 생성한다.
-2. `PATIENT` 사용자 헤더로 `appointment-service`의 `POST /appointments`를 호출해 예약을 요청한다.
-3. `DOCTOR` 사용자 헤더로 `POST /appointments/{appointmentId}/confirm`을 호출해 예약을 확정한다.
-4. 예약 확정 이벤트가 `appointment-confirmed` 토픽으로 발행되고 `notification-service`가 알림을 저장한다.
-5. `DOCTOR` 사용자 헤더로 `prescription-service`의 `POST /prescriptions`를 호출해 처방을 발행한다.
-6. 처방 발행 이벤트가 `prescription-issued` 토픽으로 발행되고 `notification-service`가 알림을 저장한다.
-7. `PATIENT` 사용자 헤더로 `GET /notifications`, `GET /prescriptions`를 호출해 본인 데이터가 조회되는지 확인한다.
+기본 `task test-e2e`는 현재 서비스 구조에 맞춘 시나리오 파일을 순서대로 실행한다.
+
+1. `01-concert-seat-setup`: 공연장, 공연, 회차, 좌석맵을 만들고 공개 공연/좌석 조회를 확인한다.
+2. `02-reservation-create`: 예약 입력값을 준비하고 판매를 연 뒤 사용자 예약 생성과 조회를 확인한다.
+3. `03-ticket-issue`: 티켓 직접 발급, 소유자 조회, 중복 발급의 멱등성을 확인한다.
 
 ## 로컬 E2E 실행
 
@@ -91,22 +88,20 @@ task test-e2e
 
 | 서비스 | 기본 URL |
 | --- | --- |
-| `patient-service` | `http://patient-service:8081` |
 | `concert-service` | `http://concert-service:8082` |
 | `reservation-service` | `http://reservation-service:8083` |
 | `payment-service` | `http://payment-service:8080` |
 | `ticket-service` | `http://ticket-service:8085` |
-| `appointment-service` | `http://appointment-service:8082` |
-| `prescription-service` | `http://prescription-service:8083` |
 | `notification-service` | `http://notification-service:8084` |
 
 `tests/e2e/scripts/wait-for-services.sh`는 Docker curl 컨테이너 안에서 실행된다. Newman 컬렉션도 Docker Newman 컨테이너 안에서 실행되므로 로컬에 curl이나 newman을 따로 설치하지 않는다.
 
-첫 티켓팅 E2E 시나리오는 공연, 회차, 좌석 준비를 하나의 검증 단위로 분리해 실행한다.
+특정 시나리오만 빠르게 확인할 때는 `SCENARIO`를 지정한다.
 
 ```bash
 task test-e2e SCENARIO=01-concert-seat-setup
 task test-e2e SCENARIO=02-reservation-create
+task test-e2e SCENARIO=03-ticket-issue
 ```
 
 ## CI

@@ -55,16 +55,14 @@ tasks:
           -e packages/contracts \
           -r services/auth-service/requirements.txt \
           -r services/auth-service/requirements-test.txt \
-          -r services/patient-service/requirements.txt \
-          -r services/patient-service/requirements-test.txt \
-          -r services/appointment-service/requirements.txt \
-          -r services/appointment-service/requirements-test.txt \
-          -r services/prescription-service/requirements.txt \
-          -r services/prescription-service/requirements-test.txt \
+          -r services/concert-service/requirements.txt \
+          -r services/concert-service/requirements-test.txt \
           -r services/notification-service/requirements.txt \
           -r services/notification-service/requirements-test.txt \
           -r services/payment-service/requirements.txt \
           -r services/payment-service/requirements-test.txt \
+          -r services/reservation-service/requirements.txt \
+          -r services/reservation-service/requirements-test.txt \
           -r services/ticket-service/requirements.txt \
           -r services/ticket-service/requirements-test.txt
         printf 'Python venv is ready at %s.\n' "${venv_dir}"

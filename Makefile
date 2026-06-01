@@ -15,10 +15,13 @@ E2E_COMPOSE_PROJECT ?= medical-platform-e2e
 E2E_NETWORK ?= $(E2E_COMPOSE_PROJECT)_default
 CURL_IMAGE ?= curlimages/curl:8.7.1
 NEWMAN_IMAGE ?= postman/newman:6-alpine
-E2E_PATIENT_SERVICE_URL ?= http://patient-service:8081
-E2E_APPOINTMENT_SERVICE_URL ?= http://appointment-service:8082
-E2E_PRESCRIPTION_SERVICE_URL ?= http://prescription-service:8083
+E2E_CONCERT_SERVICE_URL ?= http://concert-service:8082
+E2E_RESERVATION_SERVICE_URL ?= http://reservation-service:8083
+E2E_PAYMENT_SERVICE_URL ?= http://payment-service:8080
+E2E_TICKET_SERVICE_URL ?= http://ticket-service:8085
 E2E_NOTIFICATION_SERVICE_URL ?= http://notification-service:8084
+E2E_DEFAULT_SCENARIOS ?= 01-concert-seat-setup 02-reservation-create 03-ticket-issue
+E2E_WAIT_SERVICES ?= concert-service reservation-service payment-service ticket-service notification-service
 
 LOCAL_REGISTRY_HOST ?= 10.10.10.10
 LOCAL_REGISTRY_PORT ?= 5000
@@ -35,9 +38,10 @@ endif
 
 APP_SERVICES := \
 	auth-service \
-	patient-service \
-	appointment-service \
-	prescription-service \
+	concert-service \
+	reservation-service \
+	payment-service \
+	ticket-service \
 	notification-service
 
 APP_IMAGE_SERVICES := \
@@ -51,7 +55,7 @@ APP_IMAGE_SERVICES := \
 SERVICE_DIRS := $(addprefix services/,$(APP_SERVICES))
 DASHBOARD_SERVICE ?= dashboard
 
-.PHONY: help list install test-runner-build test-unit test test-all test-e2e e2e-up e2e-wait e2e-newman e2e-down app-images-build app-images-push dev-images-build dev-images-push
+.PHONY: help list install test-runner-build test-unit test test-all test-e2e e2e-scenario e2e-up e2e-wait e2e-newman e2e-down app-images-build app-images-push dev-images-build dev-images-push
 
 help:
 	@printf '%s\n' 'Medical Platform service commands'
@@ -94,16 +98,14 @@ install:
 		-e packages/contracts \
 		-r services/auth-service/requirements.txt \
 		-r services/auth-service/requirements-test.txt \
-		-r services/patient-service/requirements.txt \
-		-r services/patient-service/requirements-test.txt \
-		-r services/appointment-service/requirements.txt \
-		-r services/appointment-service/requirements-test.txt \
-		-r services/prescription-service/requirements.txt \
-		-r services/prescription-service/requirements-test.txt \
+		-r services/concert-service/requirements.txt \
+		-r services/concert-service/requirements-test.txt \
 		-r services/notification-service/requirements.txt \
 		-r services/notification-service/requirements-test.txt \
 		-r services/payment-service/requirements.txt \
 		-r services/payment-service/requirements-test.txt \
+		-r services/reservation-service/requirements.txt \
+		-r services/reservation-service/requirements-test.txt \
 		-r services/ticket-service/requirements.txt \
 		-r services/ticket-service/requirements-test.txt; \
 	printf '%s\n' 'Python venv is ready at $(VENV_DIR).'
@@ -120,10 +122,22 @@ test-all: test-unit test-e2e
 
 test-e2e:
 	@set -e; \
-	trap '$(DOCKER_COMPOSE) -p $(E2E_COMPOSE_PROJECT) -f $(E2E_COMPOSE_FILE) down -v --remove-orphans' EXIT INT TERM; \
-	$(MAKE) e2e-up; \
-	$(MAKE) e2e-wait; \
-	$(MAKE) e2e-newman
+	for scenario in $(E2E_DEFAULT_SCENARIOS); do \
+		$(MAKE) e2e-scenario SCENARIO=$$scenario; \
+	done
+
+e2e-scenario:
+	@set -e; \
+	case "$(SCENARIO)" in \
+		01-concert-seat-setup) compose_services="postgres concert-service"; wait_services="concert-service" ;; \
+		02-reservation-create) compose_services="postgres reservation-service"; wait_services="reservation-service" ;; \
+		03-ticket-issue) compose_services="postgres kafka kafka-init ticket-service"; wait_services="ticket-service" ;; \
+		*) printf 'Unknown SCENARIO=%s\n' "$(SCENARIO)" >&2; exit 2 ;; \
+	esac; \
+	trap '$(DOCKER_COMPOSE) -p $(E2E_COMPOSE_PROJECT) -f $(E2E_COMPOSE_FILE) down -v --remove-orphans' EXIT; \
+	$(DOCKER_COMPOSE) -p $(E2E_COMPOSE_PROJECT) -f $(E2E_COMPOSE_FILE) up -d --build $$compose_services; \
+	$(MAKE) e2e-wait E2E_WAIT_SERVICES="$$wait_services"; \
+	$(MAKE) e2e-newman SCENARIO="$(SCENARIO)"
 
 e2e-up:
 	$(DOCKER_COMPOSE) -p $(E2E_COMPOSE_PROJECT) -f $(E2E_COMPOSE_FILE) up -d --build
@@ -131,25 +145,28 @@ e2e-up:
 e2e-wait:
 	docker run --rm --network $(E2E_NETWORK) \
 		-v "$(CURDIR)/tests/e2e/scripts":/scripts:ro \
-		-e E2E_PATIENT_SERVICE_URL="$(E2E_PATIENT_SERVICE_URL)" \
-		-e E2E_APPOINTMENT_SERVICE_URL="$(E2E_APPOINTMENT_SERVICE_URL)" \
-		-e E2E_PRESCRIPTION_SERVICE_URL="$(E2E_PRESCRIPTION_SERVICE_URL)" \
+		-e E2E_CONCERT_SERVICE_URL="$(E2E_CONCERT_SERVICE_URL)" \
+		-e E2E_RESERVATION_SERVICE_URL="$(E2E_RESERVATION_SERVICE_URL)" \
+		-e E2E_PAYMENT_SERVICE_URL="$(E2E_PAYMENT_SERVICE_URL)" \
+		-e E2E_TICKET_SERVICE_URL="$(E2E_TICKET_SERVICE_URL)" \
 		-e E2E_NOTIFICATION_SERVICE_URL="$(E2E_NOTIFICATION_SERVICE_URL)" \
+		-e E2E_WAIT_SERVICES="$(E2E_WAIT_SERVICES)" \
 		-e E2E_WAIT_TIMEOUT_SECONDS \
 		-e E2E_WAIT_SLEEP_SECONDS \
 		$(CURL_IMAGE) sh /scripts/wait-for-services.sh
 
 e2e-newman:
 	mkdir -p tests/e2e/newman/reports
-	docker run --rm --network $(E2E_NETWORK) -v "$(CURDIR)/tests/e2e":/etc/newman -w /etc/newman $(NEWMAN_IMAGE) run postman/medical-platform.postman_collection.json \
+	docker run --rm --network $(E2E_NETWORK) -v "$(CURDIR)/tests/e2e":/etc/newman -w /etc/newman $(NEWMAN_IMAGE) run scenarios/$(SCENARIO).postman_collection.json \
 		-e newman/docker.postman_environment.json \
-		--env-var patientServiceUrl="$(E2E_PATIENT_SERVICE_URL)" \
-		--env-var appointmentServiceUrl="$(E2E_APPOINTMENT_SERVICE_URL)" \
-		--env-var prescriptionServiceUrl="$(E2E_PRESCRIPTION_SERVICE_URL)" \
+		--env-var concertServiceUrl="$(E2E_CONCERT_SERVICE_URL)" \
+		--env-var reservationServiceUrl="$(E2E_RESERVATION_SERVICE_URL)" \
+		--env-var paymentServiceUrl="$(E2E_PAYMENT_SERVICE_URL)" \
+		--env-var ticketServiceUrl="$(E2E_TICKET_SERVICE_URL)" \
 		--env-var notificationServiceUrl="$(E2E_NOTIFICATION_SERVICE_URL)" \
 		--reporters cli,junit \
 		--delay-request 1000 \
-		--reporter-junit-export newman/reports/e2e.xml
+		--reporter-junit-export newman/reports/$(SCENARIO).xml
 
 e2e-down:
 	$(DOCKER_COMPOSE) -p $(E2E_COMPOSE_PROJECT) -f $(E2E_COMPOSE_FILE) down -v --remove-orphans

@@ -46,8 +46,6 @@ services:
       - sh
       - -c
       - |
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic appointment-confirmed --partitions 1 --replication-factor 1
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic prescription-issued --partitions 1 --replication-factor 1
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic reservation-created --partitions 1 --replication-factor 1
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic reservation-expired --partitions 1 --replication-factor 1
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic payment-approved --partitions 1 --replication-factor 1
@@ -131,64 +129,6 @@ services:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8085/health').read()"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-
-  patient-service:
-    build:
-      context: ../../services/patient-service
-      dockerfile: Dockerfile
-    environment:
-      DATABASE_URL: postgresql+psycopg://app:app@postgres:5432/patient_service
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health').read()"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-
-  appointment-service:
-    build:
-      context: ../../services/appointment-service
-      dockerfile: Dockerfile
-    environment:
-      DATABASE_URL: postgresql+psycopg://app:app@postgres:5432/appointment_service
-      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-    depends_on:
-      postgres:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-      kafka-init:
-        condition: service_completed_successfully
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/health').read()"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-
-  prescription-service:
-    build:
-      context: ../../services/prescription-service
-      dockerfile: Dockerfile
-    environment:
-      DATABASE_URL: postgresql+psycopg://app:app@postgres:5432/prescription_service
-      PATIENT_SERVICE_URL: http://patient-service:8081
-      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-    depends_on:
-      postgres:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-      kafka-init:
-        condition: service_completed_successfully
-      patient-service:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8083/health').read()"]
       interval: 5s
       timeout: 5s
       retries: 20
