@@ -8,7 +8,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from app import models
+from app import kafka, models
 from app.auth import UserContext, require_role, require_user_context
 from app.config import settings
 from app.database import engine, get_db
@@ -69,7 +69,7 @@ def metrics() -> Response:
 
 
 @app.post("/payments", response_model=PaymentResponse, status_code=status.HTTP_201_CREATED)
-def create_payment(
+async def create_payment(
     request_body: CreatePaymentRequest,
     request: Request,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
@@ -100,27 +100,30 @@ def create_payment(
     )
     db.add(payment)
     event_name = _payment_event_name(payment.status)
+    event_payload = None
     if event_name is not None:
+        event_id = f"evt-{uuid4()}"
+        event_payload = _payment_event_payload(
+            event_id=event_id,
+            event_name=event_name,
+            payment=payment,
+            request_body=request_body,
+            user=user,
+            request=request,
+        )
         db.add(
             PaymentEvent(
-                id=f"evt-{uuid4()}",
+                id=event_id,
                 event_type=event_name,
                 payment_id=payment.id,
-                payload={
-                    "eventId": f"evt-{uuid4()}",
-                    "eventType": event_name,
-                    "paymentId": payment.id,
-                    "reservationId": payment.reservation_id,
-                    "concertId": payment.concert_id,
-                    "amount": payment.amount,
-                    "status": payment.status,
-                    "occurredAt": datetime.now(UTC).isoformat(),
-                },
+                payload=event_payload,
             )
         )
     db.commit()
     db.refresh(payment)
     request.state.payment_event = event_name
+    if event_name is not None and event_payload is not None:
+        await kafka.publish_event(_payment_event_topic(event_name), event_payload)
     return PaymentResponse.model_validate(payment)
 
 
@@ -174,6 +177,44 @@ def _payment_event_name(payment_status: str) -> str | None:
     if payment_status == "failed":
         return "payment-failed"
     return None
+
+
+def _payment_event_topic(event_name: str) -> str:
+    if event_name == "payment-approved":
+        return settings.payment_approved_topic
+    if event_name == "payment-failed":
+        return settings.payment_failed_topic
+    return event_name
+
+
+def _payment_event_payload(
+    *,
+    event_id: str,
+    event_name: str,
+    payment: Payment,
+    request_body: CreatePaymentRequest,
+    user: UserContext,
+    request: Request,
+) -> dict:
+    return {
+        "eventId": event_id,
+        "eventType": event_name,
+        "userId": _event_user_id(user.user_id),
+        "sourceId": payment.id,
+        "paymentId": payment.id,
+        "reservationId": payment.reservation_id,
+        "concertId": payment.concert_id,
+        "seatId": request_body.seatId or "unknown",
+        "amount": payment.amount,
+        "status": payment.status,
+        "occurredAt": datetime.now(UTC).isoformat(),
+        "producer": settings.service_name,
+        "correlationId": getattr(request.state, "request_id", None) or request.headers.get("X-Request-Id"),
+    }
+
+
+def _event_user_id(value: str) -> int | str:
+    return int(value) if value.isdigit() else value
 
 
 def _settlement_for_concert(concert_id: str, db: Session) -> SettlementBasisResponse:

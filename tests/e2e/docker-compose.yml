@@ -96,7 +96,6 @@ services:
       dockerfile: services/payment-service/Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://app:app@postgres:5432/payment_service
-      JWT_SECRET: ticketing-dev-secret
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
     depends_on:
       postgres:

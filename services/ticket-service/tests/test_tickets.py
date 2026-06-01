@@ -89,6 +89,16 @@ def test_user_can_get_own_ticket(monkeypatch: pytest.MonkeyPatch) -> None:
     assert response.json()["id"] == issued["id"]
 
 
+def test_user_can_list_my_tickets(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_kafka_and_s3(monkeypatch)
+
+    issued = client.post("/tickets/issue", json=ticket_issue_request()).json()
+    response = client.get("/tickets/me", headers=user_headers(1))
+
+    assert response.status_code == 200
+    assert response.json()[0]["id"] == issued["id"]
+
+
 def test_user_cannot_get_other_user_ticket(monkeypatch: pytest.MonkeyPatch) -> None:
     _mock_kafka_and_s3(monkeypatch)
 
@@ -138,6 +148,12 @@ def test_readyz() -> None:
     response = client.get("/readyz")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_metrics_returns_prometheus_format() -> None:
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    assert "python_info" in response.text
 
 
 # ── 헬퍼 ──────────────────────────────────────────────────────

@@ -206,6 +206,12 @@ def test_readyz() -> None:
     assert response.json()["status"] == "ok"
 
 
+def test_metrics_returns_prometheus_format() -> None:
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    assert "python_info" in response.text
+
+
 # ── 헬퍼 ──────────────────────────────────────────────────────
 
 def _seed_notifications() -> None:

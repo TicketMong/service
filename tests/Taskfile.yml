@@ -2,24 +2,25 @@ version: "3"
 
 vars:
   ROOT_DIR: '{{.TASKFILE_DIR}}/..'
-  TEST_RUNNER_IMAGE: '{{default "medical-platform-python-test-runner:local" .TEST_RUNNER_IMAGE}}'
+  TEST_RUNNER_IMAGE: '{{default "ticketing-python-test-runner:local" .TEST_RUNNER_IMAGE}}'
   PYTEST_ARGS: '{{default "-q -s -p no:cacheprovider" .PYTEST_ARGS}}'
   TEST_SERVICES: auth-service concert-service notification-service payment-service reservation-service ticket-service
   UNIT_REPORT_DIR: '{{default "tests/tmp/reports/unit" .UNIT_REPORT_DIR}}'
+  PYTHON_BIN: '{{default "python" .PYTHON_BIN}}'
   DOCKER_COMPOSE: '{{default "docker compose" .DOCKER_COMPOSE}}'
   E2E_COMPOSE_FILE: '{{default "tests/e2e/docker-compose.yml" .E2E_COMPOSE_FILE}}'
-  E2E_COMPOSE_PROJECT: '{{default "medical-platform-e2e" .E2E_COMPOSE_PROJECT}}'
+  E2E_COMPOSE_PROJECT: '{{default "ticketing-e2e" .E2E_COMPOSE_PROJECT}}'
   E2E_COMPOSE_SERVICES: '{{default "" .E2E_COMPOSE_SERVICES}}'
-  E2E_NETWORK: '{{default "medical-platform-e2e_default" .E2E_NETWORK}}'
+  E2E_NETWORK: '{{default "ticketing-e2e_default" .E2E_NETWORK}}'
   CURL_IMAGE: '{{default "curlimages/curl:8.7.1" .CURL_IMAGE}}'
   NEWMAN_IMAGE: '{{default "postman/newman:6-alpine" .NEWMAN_IMAGE}}'
-  E2E_DEFAULT_SCENARIOS: '{{default "01-concert-seat-setup 02-reservation-create 03-ticket-issue" .E2E_DEFAULT_SCENARIOS}}'
   E2E_WAIT_SERVICES: '{{default "concert-service reservation-service payment-service ticket-service notification-service" .E2E_WAIT_SERVICES}}'
   E2E_CONCERT_SERVICE_URL: '{{default "http://concert-service:8082" .E2E_CONCERT_SERVICE_URL}}'
   E2E_RESERVATION_SERVICE_URL: '{{default "http://reservation-service:8083" .E2E_RESERVATION_SERVICE_URL}}'
   E2E_PAYMENT_SERVICE_URL: '{{default "http://payment-service:8080" .E2E_PAYMENT_SERVICE_URL}}'
   E2E_TICKET_SERVICE_URL: '{{default "http://ticket-service:8085" .E2E_TICKET_SERVICE_URL}}'
   E2E_NOTIFICATION_SERVICE_URL: '{{default "http://notification-service:8084" .E2E_NOTIFICATION_SERVICE_URL}}'
+  E2E_SCENARIO: '{{default "all" .E2E_SCENARIO}}'
   E2E_REPORT_NAME: '{{default "e2e" .E2E_REPORT_NAME}}'
 
 tasks:
@@ -70,6 +71,13 @@ tasks:
         reports_root="${repo_root}/{{.UNIT_REPORT_DIR}}"
         rm -rf "${reports_root}"
         mkdir -p "${reports_root}"
+        python_bin='{{.PYTHON_BIN}}'
+        utc_now() {
+          "${python_bin}" -c 'from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))'
+        }
+        epoch_now() {
+          "${python_bin}" -c 'import time; print(int(time.time()))'
+        }
         pids=""
         failed=0
         for service in ${services}; do
@@ -77,8 +85,8 @@ tasks:
             report_dir="${reports_root}/${service}"
             rm -rf "${report_dir}"
             mkdir -p "${report_dir}"
-            started_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-            started_epoch="$(date +%s)"
+            started_at="$(utc_now)"
+            started_epoch="$(epoch_now)"
             exit_code=0
             status=passed
             set +e
@@ -93,10 +101,10 @@ tasks:
             if [ "${exit_code}" -ne 0 ]; then
               status=failed
             fi
-            finished_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-            finished_epoch="$(date +%s)"
+            finished_at="$(utc_now)"
+            finished_epoch="$(epoch_now)"
             duration_seconds="$((finished_epoch - started_epoch))"
-            python3 "{{.ROOT_DIR}}/tests/scripts/unit_report_summary.py" service \
+            "${python_bin}" "{{.ROOT_DIR}}/tests/scripts/unit_report_summary.py" service \
               --service "${service}" \
               --report-dir "${report_dir}" \
               --status "${status}" \
@@ -113,7 +121,7 @@ tasks:
             failed=1
           fi
         done
-        python3 "{{.ROOT_DIR}}/tests/scripts/unit_report_summary.py" aggregate --reports-root "${reports_root}"
+        "${python_bin}" "{{.ROOT_DIR}}/tests/scripts/unit_report_summary.py" aggregate --reports-root "${reports_root}"
         exit "${failed}"
 
   test-unit:
@@ -129,50 +137,43 @@ tasks:
         scenario='{{default "" .SCENARIO}}'
         compose_services='{{.E2E_COMPOSE_SERVICES}}'
         wait_services='{{.E2E_WAIT_SERVICES}}'
+        scenario_key='{{.E2E_SCENARIO}}'
         report_name='{{.E2E_REPORT_NAME}}'
-        if [ -z "${scenario}" ]; then
-          for default_scenario in {{.E2E_DEFAULT_SCENARIOS}}; do
-            task -t "{{.TASKFILE_DIR}}/Taskfile.yml" test-e2e SCENARIO="${default_scenario}"
-          done
-          exit 0
-        fi
         if [ -n "${scenario}" ]; then
-          scenario="${scenario#scenarios/}"
-          scenario="${scenario%.postman_collection.json}"
-          case "${scenario}" in
-            01-concert-seat-setup)
-              compose_services="postgres concert-service"
-              wait_services="concert-service"
-              ;;
-            02-reservation-create)
-              compose_services="postgres reservation-service"
-              wait_services="reservation-service"
-              ;;
-            03-ticket-issue)
-              compose_services="postgres kafka kafka-init ticket-service"
-              wait_services="ticket-service"
-              ;;
-            *)
-              printf 'Unknown E2E SCENARIO=%s (expected: 01-concert-seat-setup, 02-reservation-create, 03-ticket-issue).\n' "${scenario}" >&2
-              exit 2
-              ;;
-          esac
-          collection="${scenario}"
-          report_name="${scenario##*/}"
-          report_name="${report_name%.postman_collection.json}"
+          scenario_key="${scenario}"
         fi
+        scenario_key="${scenario_key#scenarios/}"
+        scenario_key="${scenario_key%.postman_collection.json}"
+        case "${scenario_key}" in
+          all|"")
+            compose_services="${compose_services:-postgres kafka kafka-init notification-db concert-service reservation-service payment-service ticket-service notification-service}"
+            wait_services="${wait_services:-concert-service reservation-service payment-service ticket-service notification-service}"
+            collections="01-concert-seat-setup 02-reservation-create 03-ticket-issue"
+            ;;
+          01-concert-seat-setup)
+            compose_services="${compose_services:-postgres concert-service}"
+            wait_services="concert-service"
+            collections="01-concert-seat-setup"
+            ;;
+          02-reservation-create)
+            compose_services="${compose_services:-postgres reservation-service}"
+            wait_services="reservation-service"
+            collections="02-reservation-create"
+            ;;
+          03-ticket-issue)
+            compose_services="${compose_services:-postgres kafka kafka-init ticket-service}"
+            wait_services="ticket-service"
+            collections="03-ticket-issue"
+            ;;
+          *)
+            printf 'Unknown E2E SCENARIO=%s (expected: all, 01-concert-seat-setup, 02-reservation-create, 03-ticket-issue).\n' "${scenario_key}" >&2
+            exit 2
+            ;;
+        esac
         compose_cmd='{{.DOCKER_COMPOSE}}'
         project='{{.E2E_COMPOSE_PROJECT}}'
         file='{{.ROOT_DIR}}/{{.E2E_COMPOSE_FILE}}'
         repo_root="$(cd "{{.ROOT_DIR}}" && pwd -P)"
-        case "${collection}" in
-          */*) newman_collection="${collection}" ;;
-          *) newman_collection="scenarios/${collection}.postman_collection.json" ;;
-        esac
-        if [ ! -f "${repo_root}/tests/e2e/${newman_collection}" ]; then
-          printf 'E2E scenario not found: %s\n' "${repo_root}/tests/e2e/${newman_collection}" >&2
-          exit 2
-        fi
         mkdir -p "${repo_root}/tests/e2e/newman/reports"
         trap '${compose_cmd} -p "${project}" -f "${file}" down -v --remove-orphans' EXIT
         ${compose_cmd} -p "${project}" -f "${file}" up -d --build ${compose_services}
@@ -187,16 +188,63 @@ tasks:
           -e E2E_WAIT_TIMEOUT_SECONDS \
           -e E2E_WAIT_SLEEP_SECONDS \
           {{.CURL_IMAGE}} sh /scripts/wait-for-services.sh
+        for collection in ${collections}; do
+          docker run --rm --network {{.E2E_NETWORK}} \
+            -v "${repo_root}/tests/e2e":/etc/newman \
+            -w /etc/newman \
+            {{.NEWMAN_IMAGE}} run "scenarios/${collection}.postman_collection.json" \
+            -e newman/docker.postman_environment.json \
+            --env-var concertServiceUrl="{{.E2E_CONCERT_SERVICE_URL}}" \
+            --env-var reservationServiceUrl="{{.E2E_RESERVATION_SERVICE_URL}}" \
+            --env-var paymentServiceUrl="{{.E2E_PAYMENT_SERVICE_URL}}" \
+            --env-var ticketServiceUrl="{{.E2E_TICKET_SERVICE_URL}}" \
+            --env-var notificationServiceUrl="{{.E2E_NOTIFICATION_SERVICE_URL}}" \
+            --reporters cli,junit \
+            --delay-request 1000 \
+            --reporter-junit-export "newman/reports/${report_name}-${collection}.xml"
+        done
+
+  e2e-up:
+    cmds:
+      - '{{.DOCKER_COMPOSE}} -p {{.E2E_COMPOSE_PROJECT}} -f "{{.ROOT_DIR}}/{{.E2E_COMPOSE_FILE}}" up -d --build postgres kafka kafka-init notification-db concert-service reservation-service payment-service ticket-service notification-service'
+
+  e2e-wait:
+    cmds:
+      - |
+        repo_root="$(cd "{{.ROOT_DIR}}" && pwd -P)"
         docker run --rm --network {{.E2E_NETWORK}} \
-          -v "${repo_root}/tests/e2e":/etc/newman \
-          -w /etc/newman \
-          {{.NEWMAN_IMAGE}} run "${newman_collection}" \
-          -e newman/docker.postman_environment.json \
-          --env-var concertServiceUrl="{{.E2E_CONCERT_SERVICE_URL}}" \
-          --env-var reservationServiceUrl="{{.E2E_RESERVATION_SERVICE_URL}}" \
-          --env-var paymentServiceUrl="{{.E2E_PAYMENT_SERVICE_URL}}" \
-          --env-var ticketServiceUrl="{{.E2E_TICKET_SERVICE_URL}}" \
-          --env-var notificationServiceUrl="{{.E2E_NOTIFICATION_SERVICE_URL}}" \
-          --reporters cli,junit \
-          --delay-request 1000 \
-          --reporter-junit-export "newman/reports/${report_name}.xml"
+          -v "${repo_root}/tests/e2e/scripts":/scripts:ro \
+          -e E2E_CONCERT_SERVICE_URL="{{.E2E_CONCERT_SERVICE_URL}}" \
+          -e E2E_RESERVATION_SERVICE_URL="{{.E2E_RESERVATION_SERVICE_URL}}" \
+          -e E2E_PAYMENT_SERVICE_URL="{{.E2E_PAYMENT_SERVICE_URL}}" \
+          -e E2E_TICKET_SERVICE_URL="{{.E2E_TICKET_SERVICE_URL}}" \
+          -e E2E_NOTIFICATION_SERVICE_URL="{{.E2E_NOTIFICATION_SERVICE_URL}}" \
+          -e E2E_WAIT_SERVICES="{{.E2E_WAIT_SERVICES}}" \
+          -e E2E_WAIT_TIMEOUT_SECONDS \
+          -e E2E_WAIT_SLEEP_SECONDS \
+          {{.CURL_IMAGE}} sh /scripts/wait-for-services.sh
+
+  e2e-newman:
+    cmds:
+      - mkdir -p "{{.ROOT_DIR}}/tests/e2e/newman/reports"
+      - |
+        repo_root="$(cd "{{.ROOT_DIR}}" && pwd -P)"
+        for collection in 01-concert-seat-setup 02-reservation-create 03-ticket-issue; do
+          docker run --rm --network {{.E2E_NETWORK}} \
+            -v "${repo_root}/tests/e2e":/etc/newman \
+            -w /etc/newman \
+            {{.NEWMAN_IMAGE}} run "scenarios/${collection}.postman_collection.json" \
+            -e newman/docker.postman_environment.json \
+            --env-var concertServiceUrl="{{.E2E_CONCERT_SERVICE_URL}}" \
+            --env-var reservationServiceUrl="{{.E2E_RESERVATION_SERVICE_URL}}" \
+            --env-var paymentServiceUrl="{{.E2E_PAYMENT_SERVICE_URL}}" \
+            --env-var ticketServiceUrl="{{.E2E_TICKET_SERVICE_URL}}" \
+            --env-var notificationServiceUrl="{{.E2E_NOTIFICATION_SERVICE_URL}}" \
+            --reporters cli,junit \
+            --delay-request 1000 \
+            --reporter-junit-export "newman/reports/{{.E2E_REPORT_NAME}}-${collection}.xml"
+        done
+
+  e2e-down:
+    cmds:
+      - '{{.DOCKER_COMPOSE}} -p {{.E2E_COMPOSE_PROJECT}} -f "{{.ROOT_DIR}}/{{.E2E_COMPOSE_FILE}}" down -v --remove-orphans'

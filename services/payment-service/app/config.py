@@ -7,6 +7,9 @@ class Settings:
     jwt_secret = os.getenv("JWT_SECRET", "ticketing-dev-secret")
     jwt_issuer = os.getenv("JWT_ISSUER", "auth-service")
     jwt_roles = {"CUSTOMER", "PROVIDER", "ADMIN"}
+    kafka_bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "")
+    payment_approved_topic = os.getenv("PAYMENT_APPROVED_TOPIC", "payment-approved")
+    payment_failed_topic = os.getenv("PAYMENT_FAILED_TOPIC", "payment-failed")
 
 
 settings = Settings()

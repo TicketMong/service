@@ -9,7 +9,7 @@
 | 구분 | 도구 | 대상 |
 | --- | --- | --- |
 | 단위 테스트 | Docker Python pytest 러너 | `auth-service`, `concert-service`, `notification-service`, `payment-service`, `reservation-service`, `ticket-service` |
-| E2E 테스트 | Docker Compose, PostgreSQL, MongoDB, Kafka, Docker curl/Newman 컨테이너 | 시나리오 파일 단위로 서비스 DNS를 직접 호출해 검증 |
+| E2E 테스트 | Docker Compose, PostgreSQL, MongoDB, Kafka, Docker curl/Newman 컨테이너 | 시나리오 파일 단위로 티켓팅 서비스 DNS를 직접 호출해 검증 |
 | Gateway E2E | 별도 future scope | Kong/JWT/Ingress 라우팅과 MetalLB 노출 검증 |
 
 ## 폴더 구조
@@ -68,13 +68,15 @@ task test-services SERVICES="auth-service ticket-service"
 
 ## E2E 테스트 흐름
 
-Newman 컬렉션은 Docker Compose 네트워크 DNS로 각 서비스를 직접 호출한다. Kong/JWT/Ingress는 기본 `task test-e2e` 범위가 아니며, 서비스가 기대하는 `X-User-*` 헤더를 요청에 직접 넣는다.
+Newman 컬렉션은 Docker Compose 네트워크 DNS로 각 서비스를 직접 호출해 다음 티켓팅 baseline 흐름을 검증한다. Kong/JWT/Ingress는 기본 `task test-e2e` 범위가 아니며, 서비스가 기대하는 내부 인증 헤더를 요청에 직접 넣는다.
 
-기본 `task test-e2e`는 현재 서비스 구조에 맞춘 시나리오 파일을 순서대로 실행한다.
+1. `concert-service`에서 공연장, 공연, 회차, 좌석맵을 생성한다.
+2. 공개 공연 회차와 좌석 조회가 정상 동작하는지 확인한다.
+3. `reservation-service`에서 판매를 시작한다.
+4. 좌석 예약을 생성하고 사용자 예약 목록에 노출되는지 확인한다.
+5. `ticket-service`에서 티켓 직접 발급과 중복 발급 idempotency를 확인한다.
 
-1. `01-concert-seat-setup`: 공연장, 공연, 회차, 좌석맵을 만들고 공개 공연/좌석 조회를 확인한다.
-2. `02-reservation-create`: 예약 입력값을 준비하고 판매를 연 뒤 사용자 예약 생성과 조회를 확인한다.
-3. `03-ticket-issue`: 티켓 직접 발급, 소유자 조회, 중복 발급의 멱등성을 확인한다.
+Kafka, 결제, 알림까지 이어지는 전체 이벤트 흐름은 `packages/contracts`의 이벤트 계약과 각 서비스 Kafka publisher/consumer를 기준으로 확장한다.
 
 ## 로컬 E2E 실행
 
@@ -96,7 +98,7 @@ task test-e2e
 
 `tests/e2e/scripts/wait-for-services.sh`는 Docker curl 컨테이너 안에서 실행된다. Newman 컬렉션도 Docker Newman 컨테이너 안에서 실행되므로 로컬에 curl이나 newman을 따로 설치하지 않는다.
 
-특정 시나리오만 빠르게 확인할 때는 `SCENARIO`를 지정한다.
+특정 시나리오만 실행하려면 다음 명령을 사용한다.
 
 ```bash
 task test-e2e SCENARIO=01-concert-seat-setup
@@ -127,7 +129,7 @@ Kong/JWT/Ingress 검증은 기본 E2E와 분리한다. 이후 필요해지면 `t
 | pytest import 실패 | `task test-unit`로 Docker 테스트 러너를 통해 실행했는지 확인 |
 | DB 연결 실패 | `DATABASE_URL` 값과 PostgreSQL 실행 상태 확인 |
 | Kafka 이벤트 검증 실패 | Compose `kafka:29092`, topic auto-create, `notification-service` consumer 로그 확인 |
-| Newman 401 | `X-User-Id`, `X-User-Role` 헤더 누락 여부 확인 |
-| Newman 403 | `X-Patient-Id`, `X-Doctor-Id`와 요청 데이터의 권한 관계 확인 |
+| Newman 401 | Gateway E2E가 아닌지, 서비스가 요구하는 인증 헤더가 누락됐는지 확인 |
+| Newman 403 | provider/admin path 권한 헤더와 요청 데이터의 권한 관계 확인 |
 | Newman 404 | 서비스 URL과 API path 확인 |
-| Newman readiness timeout | `docker compose -p medical-platform-e2e -f tests/e2e/docker-compose.yml ps`와 각 서비스 로그 확인 |
+| Newman readiness timeout | `docker compose -p ticketing-e2e -f tests/e2e/docker-compose.yml ps`와 각 서비스 로그 확인 |

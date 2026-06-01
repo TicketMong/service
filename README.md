@@ -15,7 +15,6 @@
 | `services/ticket-service/` | 결제 승인 이벤트 기반 티켓 발급 |
 | `services/notification-service/` | Kafka 이벤트 기반 알림 저장 |
 | `contracts/` | 서비스별 OpenAPI 문서와 공통 API/JWT 계약 |
-| `dashboard/` | 서비스 동작을 확인하는 정적 화면 |
 | `tests/` | 단위 테스트 러너와 테스트 보조 파일 |
 
 ## 서비스 흐름

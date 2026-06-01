@@ -6,12 +6,12 @@ VENV_DIR ?= .venv
 VENV_BOOTSTRAP_PYTHON ?= python3.13
 VENV_PYTHON := $(CURDIR)/$(VENV_DIR)/bin/python
 
-TEST_RUNNER_IMAGE ?= medical-platform-python-test-runner:local
+TEST_RUNNER_IMAGE ?= ticketing-python-test-runner:local
 PYTEST_ARGS ?= -q -s -p no:cacheprovider
 
 DOCKER_COMPOSE ?= docker compose
 E2E_COMPOSE_FILE ?= tests/e2e/docker-compose.yml
-E2E_COMPOSE_PROJECT ?= medical-platform-e2e
+E2E_COMPOSE_PROJECT ?= ticketing-e2e
 E2E_NETWORK ?= $(E2E_COMPOSE_PROJECT)_default
 CURL_IMAGE ?= curlimages/curl:8.7.1
 NEWMAN_IMAGE ?= postman/newman:6-alpine
@@ -53,12 +53,10 @@ APP_IMAGE_SERVICES := \
 	notification-service
 
 SERVICE_DIRS := $(addprefix services/,$(APP_SERVICES))
-DASHBOARD_SERVICE ?= dashboard
-
 .PHONY: help list install test-runner-build test-unit test test-all test-e2e e2e-scenario e2e-up e2e-wait e2e-newman e2e-down app-images-build app-images-push dev-images-build dev-images-push
 
 help:
-	@printf '%s\n' 'Medical Platform service commands'
+	@printf '%s\n' 'Ticketing service commands'
 	@printf '%s\n' ''
 	@printf '%s\n' 'Setup'
 	@printf '  %-30s %s\n' 'make install' 'Create a Python venv and install service dependencies.'
@@ -74,7 +72,7 @@ help:
 	@printf '  %-30s %s\n' 'make e2e-down' 'Stop and remove the E2E Docker Compose stack.'
 	@printf '%s\n' ''
 	@printf '%s\n' 'Images'
-	@printf '  %-30s %s\n' 'make app-images-build' 'Build service and dashboard Docker images.'
+	@printf '  %-30s %s\n' 'make app-images-build' 'Build service Docker images.'
 	@printf '  %-30s %s\n' 'make app-images-push' 'Build images and push them to the registry.'
 	@printf '  %-30s %s\n' 'make dev-images-build' 'Build Docker Desktop dev images with DEV_IMAGE_* variables.'
 	@printf '  %-30s %s\n' 'make dev-images-push' 'Push Docker Desktop dev images with DEV_IMAGE_* variables.'
@@ -189,13 +187,11 @@ app-images-build:
 			*) \
 				docker build -t "$(IMAGE_REPOSITORY_PREFIX)/$$service:$(IMAGE_TAG)" "services/$$service" ;; \
 		esac; \
-	done; \
-	printf 'building %s/%s:%s\n' '$(IMAGE_REPOSITORY_PREFIX)' '$(DASHBOARD_SERVICE)' '$(IMAGE_TAG)'; \
-	docker build -t "$(IMAGE_REPOSITORY_PREFIX)/$(DASHBOARD_SERVICE):$(IMAGE_TAG)" "$(DASHBOARD_SERVICE)"
+	done
 
 app-images-push: app-images-build
 	@set -euo pipefail; \
-	for service in $(APP_IMAGE_SERVICES) $(DASHBOARD_SERVICE); do \
+	for service in $(APP_IMAGE_SERVICES); do \
 		printf 'pushing %s/%s:%s\n' '$(IMAGE_REPOSITORY_PREFIX)' "$$service" '$(IMAGE_TAG)'; \
 		docker push "$(IMAGE_REPOSITORY_PREFIX)/$$service:$(IMAGE_TAG)"; \
 	done
