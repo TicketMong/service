@@ -239,7 +239,7 @@ jobs:
           cd gitops
 
           jq -r '.[] | "\(.image) \(.tag)"' ../deploy-plan.json | while read -r image tag; do
-            service_file="values/services/${image%.service}.yaml"
+            service_file="values/services/${image%-service}.yaml"
             if [ ! -f "${service_file}" ]; then
               service_file="values/services/${image}.yaml"
             fi
