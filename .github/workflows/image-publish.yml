@@ -51,6 +51,8 @@ jobs:
           REQUESTED_IMAGE: ${{ github.event.inputs.image || 'all' }}
         run: |
           set -euo pipefail
+          pwd
+          ls
           all_images='["auth-service","concert-service","reservation-service","payment-service","ticket-service","notification-service"]'
 
           images="$(jq -c --arg requested "${REQUESTED_IMAGE}" '
@@ -102,6 +104,8 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
+          pwd
+          ls
           task app-image-build \
             SERVICE="${{ matrix.image }}" \
             IMAGE_REGISTRY="${IMAGE_REGISTRY}" \
@@ -111,6 +115,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          pwd
+          ls
           image_ref="${IMAGE_REGISTRY}/${{ matrix.image }}:${IMAGE_TAG}"
           docker push "${image_ref}"
 
@@ -119,6 +125,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          pwd
+          ls
           image="${{ matrix.image }}"
           image_ref="${IMAGE_REGISTRY}/${image}:${IMAGE_TAG}"
 
@@ -197,6 +205,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          pwd
+          ls
           jq -s 'sort_by(.image)' deploy-plan/*.json > deploy-plan.json
 
           {
@@ -231,6 +241,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          pwd
+          ls
           cd gitops
 
           jq -r '.[] | "\(.image) \(.tag)"' ../deploy-plan.json | while read -r image tag; do
@@ -251,6 +263,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          pwd
+          ls
           cd gitops
 
           git config user.email "github-actions@github.com"
