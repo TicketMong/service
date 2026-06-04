@@ -92,6 +92,9 @@ jobs:
         with:
           repo-token: ${{ github.token }}
 
+      - name: Docker Buildx 설정
+        uses: docker/setup-buildx-action@v3
+
       - name: ECR 로그인
         uses: aws-actions/amazon-ecr-login@v2
         env:
