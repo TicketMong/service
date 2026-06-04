@@ -1,11 +1,8 @@
 name: Image Publish
 
 # 이 workflow는 `main` 반영 또는 수동 실행 때 이미지 publish 정식 단계를 수행한다.
-# 처리 흐름: 이미지 목록 결정 -> registry 준비 -> 이미지 빌드 -> 이미지 push -> digest 수집 -> deploy-plan artifact 생성.
-# 현재 registry는 runner 내부의 `localhost:5000`이며, 영속 registry로 바꿀 때는 registry 주소와 인증 단계만 교체한다.
-# Kubernetes 배포 선언 수정, GitOps repo 변경, Argo CD sync는 여기서 실행하지 않고 배포 계획만 남긴다.
-# TODO(레지스트리): 영속 registry를 붙일 때 `localhost:5000`을 ECR/GHCR URL로 교체하고 로그인/OIDC 인증 단계를 추가한다.
-# TODO(GitOps): 별도 GitOps 업데이트 단계에서 `deploy-plan.json`을 읽어 manifest/values 변경 PR을 만들고 Argo CD sync와 연결한다.
+# 처리 흐름: 이미지 목록 결정 -> ECR 로그인 -> 이미지 빌드 -> 이미지 push -> digest 수집 -> deploy-plan artifact 생성 -> gitops values 업데이트.
+
 on:
   push:
     branches:
@@ -34,8 +31,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  IMAGE_REGISTRY: localhost:5000
+  IMAGE_REGISTRY: 941141115079.dkr.ecr.ap-northeast-2.amazonaws.com
   IMAGE_TAG: ${{ github.sha }}
+  AWS_REGION: ap-northeast-2
 
 jobs:
   select-images:
@@ -83,12 +81,6 @@ jobs:
       matrix:
         image: ${{ fromJson(needs.select-images.outputs.images) }}
 
-    services:
-      registry:
-        image: registry:2
-        ports:
-          - 5000:5000
-
     steps:
       - name: 소스 내려받기
         uses: actions/checkout@v4
@@ -98,18 +90,12 @@ jobs:
         with:
           repo-token: ${{ github.token }}
 
-      - name: registry 준비 확인
-        shell: bash
-        run: |
-          set -euo pipefail
-          for attempt in $(seq 1 30); do
-            if curl -fsS "http://${IMAGE_REGISTRY}/v2/" >/dev/null; then
-              exit 0
-            fi
-            sleep 1
-          done
-          printf 'registry가 준비되지 않았습니다: %s\n' "${IMAGE_REGISTRY}" >&2
-          exit 1
+      - name: ECR 로그인
+        uses: aws-actions/amazon-ecr-login@v2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ env.AWS_REGION }}
 
       - name: Docker 이미지 빌드
         shell: bash
@@ -171,7 +157,7 @@ jobs:
               digest_ref: $digest_ref,
               digest_source: $digest_source,
               source_sha: $source_sha,
-              gitops_action: "plan-only"
+              gitops_action: "updated"
             }' > "deploy-plan/${image}.json"
 
           {
@@ -180,7 +166,7 @@ jobs:
             printf -- '- 태그 참조: `%s`\n' "${image_ref}"
             printf -- '- digest 참조: `%s`\n' "${IMAGE_REGISTRY}/${image}@${digest}"
             printf -- '- digest 출처: `%s`\n' "${digest_source}"
-            printf -- '- GitOps 작업: `plan-only`\n'
+            printf -- '- GitOps 작업: `updated`\n'
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: 이미지별 deploy plan 업로드
@@ -191,7 +177,7 @@ jobs:
           if-no-files-found: error
 
   deploy-plan:
-    name: deploy plan 조립
+    name: deploy plan 조립 및 gitops 업데이트
     needs:
       - select-images
       - publish
@@ -216,7 +202,7 @@ jobs:
             printf '# 이미지 publish deploy plan\n\n'
             printf -- '- 소스 commit: `%s`\n' "${GITHUB_SHA}"
             printf -- '- registry: `%s`\n' "${IMAGE_REGISTRY}"
-            printf -- '- GitOps 작업: `plan-only`\n\n'
+            printf -- '- GitOps 작업: `updated`\n\n'
             printf '| 이미지 | 태그 참조 | digest 참조 |\n'
             printf '| --- | --- | --- |\n'
             jq -r '.[] | "| `\(.image)` | `\(.image_ref)` | `\(.digest_ref)` |"' deploy-plan.json
@@ -232,3 +218,48 @@ jobs:
             deploy-plan.json
             deploy-plan.md
           if-no-files-found: error
+
+      - name: gitops repo 체크아웃
+        uses: actions/checkout@v4
+        with:
+          repository: Medikong/gitops
+          token: ${{ secrets.GITOPS_TOKEN }}
+          path: gitops
+
+      - name: gitops values 이미지 태그 업데이트
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd gitops
+
+          jq -r '.[] | "\(.image) \(.tag)"' ../deploy-plan.json | while read -r image tag; do
+            service_file="values/services/${image%.service}.yaml"
+            if [ ! -f "${service_file}" ]; then
+              service_file="values/services/${image}.yaml"
+            fi
+
+            if [ -f "${service_file}" ]; then
+              sed -i "s|tag:.*|tag: ${tag}|g" "${service_file}"
+              printf 'updated: %s -> %s\n' "${service_file}" "${tag}"
+            else
+              printf 'skip: %s not found\n' "${service_file}"
+            fi
+          done
+
+      - name: gitops repo push
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd gitops
+
+          git config user.email "github-actions@github.com"
+          git config user.name "github-actions"
+
+          if git diff --quiet; then
+            printf 'no changes to commit\n'
+            exit 0
+          fi
+
+          git add values/services/
+          git commit -m "chore: update image tags to ${GITHUB_SHA}"
+          git push
