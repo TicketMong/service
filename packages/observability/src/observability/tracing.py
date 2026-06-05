@@ -1,3 +1,7 @@
+from collections.abc import Mapping, Sequence
+from contextlib import AbstractContextManager, nullcontext
+from typing import Protocol
+
 from opentelemetry import trace
 from opentelemetry.sdk.resources import DEPLOYMENT_ENVIRONMENT, SERVICE_NAME, SERVICE_VERSION, Resource
 from opentelemetry.sdk.trace import TracerProvider
@@ -8,6 +12,77 @@ from observability.config import ObservabilityConfig
 
 
 _tracing_configured = False
+_MANUAL_TRACER_NAME = "observability.manual"
+
+TraceScalarValue = str | int | float | bool
+TraceAttributeValue = TraceScalarValue | Sequence[TraceScalarValue]
+
+
+class TraceRecorder(Protocol):
+    """서비스 코드에서 허용하는 제한된 수동 trace 포트."""
+
+    def attribute(self, key: str, value: TraceAttributeValue) -> None:
+        """현재 span에 안전한 attribute를 기록한다."""
+
+    def event(self, name: str, attributes: Mapping[str, TraceAttributeValue] | None = None) -> None:
+        """현재 span에 중요한 업무 event를 기록한다."""
+
+    def span(
+        self,
+        name: str,
+        attributes: Mapping[str, TraceAttributeValue] | None = None,
+    ) -> AbstractContextManager[None]:
+        """주요 단계를 child span으로 측정한다."""
+
+
+class OpenTelemetryTraceRecorder:
+    """OpenTelemetry current span을 매 호출 시점에 조회하는 수동 trace facade."""
+
+    def attribute(self, key: str, value: TraceAttributeValue) -> None:
+        span = _current_valid_span()
+        if span is None:
+            return
+        span.set_attribute(_require_trace_name(key, "attribute key"), _safe_attribute_value(value))
+
+    def event(self, name: str, attributes: Mapping[str, TraceAttributeValue] | None = None) -> None:
+        span = _current_valid_span()
+        if span is None:
+            return
+        span.add_event(_require_trace_name(name, "event name"), attributes=_safe_attributes(attributes))
+
+    def span(
+        self,
+        name: str,
+        attributes: Mapping[str, TraceAttributeValue] | None = None,
+    ) -> AbstractContextManager[None]:
+        if _current_valid_span() is None:
+            return nullcontext()
+        tracer = trace.get_tracer(_MANUAL_TRACER_NAME)
+        return tracer.start_as_current_span(
+            _require_trace_name(name, "span name"),
+            attributes=_safe_attributes(attributes),
+        )
+
+
+class NoopTraceRecorder:
+    """trace가 없는 실행 경로에서 안전하게 사용할 수 있는 recorder."""
+
+    def attribute(self, key: str, value: TraceAttributeValue) -> None:
+        return None
+
+    def event(self, name: str, attributes: Mapping[str, TraceAttributeValue] | None = None) -> None:
+        return None
+
+    def span(
+        self,
+        name: str,
+        attributes: Mapping[str, TraceAttributeValue] | None = None,
+    ) -> AbstractContextManager[None]:
+        return nullcontext()
+
+
+def trace_recorder() -> TraceRecorder:
+    return OpenTelemetryTraceRecorder()
 
 
 def configure_process_tracing(config: ObservabilityConfig) -> None:
@@ -61,6 +136,41 @@ def set_current_span_attribute(key: str, value: AttributeValue | None) -> None:
 def set_current_span_attributes(attributes: dict[str, AttributeValue | None]) -> None:
     for key, value in attributes.items():
         set_current_span_attribute(key, value)
+
+
+def _current_valid_span() -> object | None:
+    span = trace.get_current_span()
+    if not span.get_span_context().is_valid:
+        return None
+    return span
+
+
+def _require_trace_name(value: str, label: str) -> str:
+    if not value:
+        raise ValueError(f"{label} must not be empty")
+    return value
+
+
+def _safe_attributes(attributes: Mapping[str, TraceAttributeValue] | None) -> dict[str, AttributeValue] | None:
+    if attributes is None:
+        return None
+    return {_require_trace_name(key, "attribute key"): _safe_attribute_value(value) for key, value in attributes.items()}
+
+
+def _safe_attribute_value(value: TraceAttributeValue) -> AttributeValue:
+    if _safe_scalar(value):
+        return value
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        values = tuple(value)
+        for item in values:
+            if not _safe_scalar(item):
+                raise TypeError("trace attribute sequences can contain only str, int, float, or bool values")
+        return values
+    raise TypeError("trace attributes can contain only str, int, float, bool, or sequences of those values")
+
+
+def _safe_scalar(value: object) -> bool:
+    return isinstance(value, str | int | float | bool)
 
 
 def _otlp_trace_export_enabled(config: ObservabilityConfig) -> bool:

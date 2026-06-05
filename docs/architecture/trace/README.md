@@ -212,7 +212,7 @@ trace는 개발자가 모든 함수에 수동으로 심는 기능이 아니다. 
 - HTTP client adapter 또는 instrumentation
 - DB driver instrumentation
 
-비즈니스 서비스 레이어는 trace를 모른다.
+비즈니스 서비스 레이어는 기본적으로 trace를 모른다. 필요한 경우 `TraceRecorder` facade로 제한된 수동 trace만 남긴다.
 
 ```text
 허용
@@ -259,7 +259,56 @@ trace는 개발자가 모든 함수에 수동으로 심는 기능이 아니다. 
 - large payload
 - high-cardinality 값을 metric label 또는 Loki label로 승격하는 것
 
-### 3. exception-context-first
+### 3. manual-trace-facade
+
+서비스 코드가 OpenTelemetry API를 직접 import하지 않도록 `packages/observability`는 `TraceRecorder` facade를 제공한다. 이 facade는 OpenTelemetry 교체용 추상화가 아니라, 서비스 코드에서 허용되는 수동 trace 사용 규칙을 좁히는 포트다.
+
+허용 API:
+
+```text
+trace.attribute(key, value)
+trace.event(name, attributes)
+trace.span(name)
+```
+
+사용 기준:
+
+- 기본은 `attribute()`다. 현재 request span 또는 child span에 검색 가능한 업무 식별자를 붙인다.
+- `event()`는 좌석 점유 생성, 결제 승인 수신처럼 운영자가 흐름에서 보고 싶은 중요한 순간에만 쓴다.
+- `span()`은 시간을 따로 보고 싶은 주요 단계에만 쓴다. 모든 service method에 decorator로 붙이지 않는다.
+- `TraceRecorder`는 span을 필드에 저장하지 않고 호출 시점마다 current span을 조회한다.
+- current span이 없거나 invalid이면 조용히 no-op 한다.
+- attribute/event 값은 `str`, `int`, `float`, `bool` 또는 그 sequence만 허용한다.
+
+금지 기준:
+
+- `services/*/app/services/*.py`에서 `opentelemetry` 직접 import
+- raw JWT, email, phone, address, payment token, 큰 payload 기록
+- loop 안에서 item마다 span 생성
+- 전체 서비스 method에 일괄 decorator 적용
+- metric label 또는 Loki label로 올릴 수 없는 고카디널리티 값을 metric/log label로 승격
+
+예시:
+
+```python
+from observability import TraceRecorder, trace_recorder
+
+
+class ReservationCommandService:
+    def __init__(self, trace: TraceRecorder | None = None) -> None:
+        self.trace = trace or trace_recorder()
+
+    def reserve_seat(self, reservation_id: str, seat_id: str) -> None:
+        trace = self.trace
+        trace.attribute("app.use_case", "reserve_seat")
+        trace.attribute("reservation.id", reservation_id)
+
+        with trace.span("reservation.reserve_seat"):
+            create_hold(seat_id)
+            trace.event("seat.hold.created", {"seat.id": seat_id})
+```
+
+### 4. exception-context-first
 
 Python에서는 Go처럼 error wrapping을 모든 함수에 강제하지 않는다. 대신 `samber/oops`의 builder/context 모델을 참고해 기존 예외에 context를 누적할 수 있는 독립 패키지를 둔다.
 
@@ -324,7 +373,7 @@ except IntegrityError as exc:
 
 비즈니스 함수는 OpenTelemetry, structlog, Sentry API를 직접 호출하지 않는다.
 
-### 4. propagation은 header에서 처리
+### 5. propagation은 header에서 처리
 
 trace context는 업무 payload에 넣지 않는다.
 
@@ -365,11 +414,13 @@ message headers:
 - SQLAlchemy engine은 공통 DB instrumentation helper로 계측
 - notification-service의 Motor/Mongo는 PyMongo instrumentation helper를 통해 가능한 범위에서 계측
 - 대표 FastAPI 요청 1건에서 span 생성 smoke 확인
+- `TraceRecorder` facade로 제한된 수동 trace API 제공
+- reservation-service 예약 생성/좌석 점유 흐름 1곳에 수동 trace 적용
 
 포함하지 않는다.
 
 - dashboard `traceparent` 생성/전파
-- API별 custom span 설계
+- 서비스 전반의 API별 custom span 표준화
 - 서비스 간 HTTP client propagation
 - HTTP client adapter
 - 업무 flow별 attribute 표준

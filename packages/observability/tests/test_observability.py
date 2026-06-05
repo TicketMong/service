@@ -1,3 +1,5 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
 import json
 import logging
 
@@ -13,6 +15,7 @@ from observability import kafka as kafka_module
 from observability import (
     OBSERVABILITY_ENV_KEYS,
     ObservabilityConfig,
+    NoopTraceRecorder,
     build_producer_headers,
     configure_process_logging,
     configure_process_tracing,
@@ -20,6 +23,7 @@ from observability import (
     instrument_fastapi_app,
     observability_config_from_env,
     record_exception,
+    trace_recorder,
 )
 from observability import tracing as tracing_module
 from observability.tracing import _otlp_trace_export_enabled
@@ -150,6 +154,79 @@ def test_configure_tracing_skips_unsupported_trace_exporter(monkeypatch) -> None
     assert exporters == []
 
 
+def test_trace_recorder_attribute_sets_current_span_attribute(monkeypatch) -> None:
+    span = FakeSpan()
+    monkeypatch.setattr(tracing_module.trace, "get_current_span", lambda: span)
+
+    trace_recorder().attribute("app.use_case", "reserve_seat")
+
+    assert span.attributes["app.use_case"] == "reserve_seat"
+
+
+def test_trace_recorder_event_adds_current_span_event(monkeypatch) -> None:
+    span = FakeSpan()
+    monkeypatch.setattr(tracing_module.trace, "get_current_span", lambda: span)
+
+    trace_recorder().event("seat.hold.created", {"seat.id": "A-1"})
+
+    assert span.events == [("seat.hold.created", {"seat.id": "A-1"})]
+
+
+def test_trace_recorder_span_starts_child_span(monkeypatch) -> None:
+    span = FakeSpan()
+    started_spans: list[tuple[str, dict[str, object] | None]] = []
+    entered: list[str] = []
+
+    class FakeTracer:
+        def start_as_current_span(self, name: str, *, attributes: dict[str, object] | None = None):
+            started_spans.append((name, attributes))
+
+            @contextmanager
+            def child_span() -> Iterator[None]:
+                entered.append("enter")
+                yield
+                entered.append("exit")
+
+            return child_span()
+
+    monkeypatch.setattr(tracing_module.trace, "get_current_span", lambda: span)
+    monkeypatch.setattr(tracing_module.trace, "get_tracer", lambda name: FakeTracer())
+
+    with trace_recorder().span("reservation.reserve_seat", {"seat.id": "A-1"}):
+        entered.append("inside")
+
+    assert started_spans == [("reservation.reserve_seat", {"seat.id": "A-1"})]
+    assert entered == ["enter", "inside", "exit"]
+
+
+def test_trace_recorder_noops_on_invalid_current_span(monkeypatch) -> None:
+    span = FakeSpan(is_valid=False)
+    monkeypatch.setattr(tracing_module.trace, "get_current_span", lambda: span)
+    monkeypatch.setattr(
+        tracing_module.trace,
+        "get_tracer",
+        lambda name: (_ for _ in ()).throw(AssertionError("unexpected tracer")),
+    )
+
+    recorder = trace_recorder()
+    recorder.attribute("app.use_case", "reserve_seat")
+    recorder.event("seat.hold.created", {"seat.id": "A-1"})
+    with recorder.span("reservation.reserve_seat"):
+        pass
+
+    assert span.attributes == {}
+    assert span.events == []
+
+
+def test_noop_trace_recorder_ignores_all_calls() -> None:
+    recorder = NoopTraceRecorder()
+
+    recorder.attribute("app.use_case", "reserve_seat")
+    recorder.event("seat.hold.created", {"seat.id": "A-1"})
+    with recorder.span("reservation.reserve_seat"):
+        pass
+
+
 def test_request_observability_emits_single_line_json_log(caplog, monkeypatch) -> None:
     span_attributes: dict[str, object] = {}
     monkeypatch.setattr(fastapi_module, "set_current_span_attributes", span_attributes.update)
@@ -266,17 +343,20 @@ def _request_log(records: list[logging.LogRecord]) -> dict[str, object]:
 
 
 class FakeSpanContext:
-    is_valid = True
+    def __init__(self, is_valid: bool = True) -> None:
+        self.is_valid = is_valid
 
 
 class FakeSpan:
-    def __init__(self) -> None:
+    def __init__(self, *, is_valid: bool = True) -> None:
         self.attributes: dict[str, object] = {}
+        self.events: list[tuple[str, dict[str, object] | None]] = []
         self.recorded_exception: BaseException | None = None
         self.status_code: str | None = None
+        self.is_valid = is_valid
 
     def get_span_context(self) -> FakeSpanContext:
-        return FakeSpanContext()
+        return FakeSpanContext(self.is_valid)
 
     def record_exception(self, exc: BaseException) -> None:
         self.recorded_exception = exc
@@ -286,3 +366,6 @@ class FakeSpan:
 
     def set_attribute(self, key: str, value: object) -> None:
         self.attributes[key] = value
+
+    def add_event(self, name: str, attributes: dict[str, object] | None = None) -> None:
+        self.events.append((name, attributes))
