@@ -9,11 +9,13 @@ ENV PATH="/opt/venv/bin:${PATH}"
 
 RUN python -m venv /opt/venv
 
-COPY packages/observability ./packages/observability
+COPY packages/errors ./packages/errors
 COPY packages/middleware ./packages/middleware
+COPY packages/observability ./packages/observability
 COPY packages/server ./packages/server
 COPY services/auth-service/requirements.txt .
 RUN python -m pip install --no-cache-dir --upgrade pip \
+    && python -m pip install --no-cache-dir ./packages/errors \
     && python -m pip install --no-cache-dir ./packages/middleware \
     && python -m pip install --no-cache-dir ./packages/observability \
     && python -m pip install --no-cache-dir ./packages/server \

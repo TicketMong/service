@@ -11,7 +11,7 @@ from starlette.responses import Response
 from middleware import get_current_client_action_id
 from middleware import get_current_request_id as get_runtime_request_id
 from observability.config import ObservabilityConfig
-from observability.tracing import current_trace_context
+from observability.tracing import current_trace_context, set_current_span_attributes
 
 
 REQUEST_ID_HEADER = "X-Request-Id"
@@ -60,6 +60,7 @@ def create_request_log_middleware(config: ObservabilityConfig) -> RequestMiddlew
             return response
         finally:
             route = _route_template(request)
+            set_current_span_attributes({"request_id": request_id, "http.route": route})
             duration_seconds = perf_counter() - started_at
             # 로그는 stdout으로, trace는 OTLP로 나가므로 두 데이터를 이어 볼 ID를 함께 남긴다.
             trace_id, span_id = current_trace_context()

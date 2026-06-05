@@ -1,6 +1,8 @@
 import asyncio
 import json
 from aiokafka import AIOKafkaConsumer
+from observability import kafka_message_attributes, record_exception, set_current_span_attributes, start_consumer_span
+
 from app.config import settings
 from app.database import SessionLocal
 from app.services.ticket_service import handle_payment_approved
@@ -20,11 +22,16 @@ async def consume_events(stop_event: asyncio.Event) -> None:
     await consumer.start()
     try:
         async for message in consumer:
-            db = SessionLocal()
-            try:
-                await handle_payment_approved(db, message.value)
-            finally:
-                db.close()
+            with start_consumer_span(message):
+                set_current_span_attributes({"event.type": str(message.value.get("eventType", "")) or None})
+                db = SessionLocal()
+                try:
+                    await handle_payment_approved(db, message.value)
+                except Exception as exc:
+                    record_exception(exc, service_name=settings.service_name, attributes=kafka_message_attributes(message))
+                    raise
+                finally:
+                    db.close()
             if stop_event.is_set():
                 break
     finally:

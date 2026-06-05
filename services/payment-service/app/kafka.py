@@ -2,6 +2,7 @@ import json
 import logging
 
 from aiokafka import AIOKafkaProducer
+from observability import build_producer_headers
 
 from app.config import settings
 
@@ -19,7 +20,7 @@ async def publish_event(topic: str, payload: dict) -> bool:
     )
     await producer.start()
     try:
-        await producer.send_and_wait(topic, payload)
+        await producer.send_and_wait(topic, payload, headers=build_producer_headers(payload))
         return True
     except Exception:
         logger.exception("failed_to_publish_event topic=%s event_id=%s", topic, payload.get("eventId"))

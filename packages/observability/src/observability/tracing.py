@@ -2,6 +2,7 @@ from opentelemetry import trace
 from opentelemetry.sdk.resources import DEPLOYMENT_ENVIRONMENT, SERVICE_NAME, SERVICE_VERSION, Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.util.types import AttributeValue
 
 from observability.config import ObservabilityConfig
 
@@ -46,6 +47,20 @@ def current_trace_context() -> tuple[str, str]:
     if not span_context.is_valid:
         return "", ""
     return format(span_context.trace_id, "032x"), format(span_context.span_id, "016x")
+
+
+def set_current_span_attribute(key: str, value: AttributeValue | None) -> None:
+    if value is None:
+        return
+    span = trace.get_current_span()
+    if not span.get_span_context().is_valid:
+        return
+    span.set_attribute(key, value)
+
+
+def set_current_span_attributes(attributes: dict[str, AttributeValue | None]) -> None:
+    for key, value in attributes.items():
+        set_current_span_attribute(key, value)
 
 
 def _otlp_trace_export_enabled(config: ObservabilityConfig) -> bool:

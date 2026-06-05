@@ -18,6 +18,7 @@ test = [
 ]
 
 [tool.uv.sources]
+errors = { path = "../errors", editable = true }
 middleware = { path = "../middleware", editable = true }
 observability = { path = "../observability", editable = true }
 
@@ -26,4 +27,4 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
-pythonpath = ["src", "../middleware/src", "../observability/src"]
+pythonpath = ["src", "../errors/src", "../middleware/src", "../observability/src"]
