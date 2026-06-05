@@ -1,0 +1,18 @@
+[project]
+name = "middleware"
+version = "0.1.0"
+description = "Shared ASGI runtime middleware for Medikong services"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+test = [
+    "pytest==9.0.2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

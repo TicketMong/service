@@ -526,9 +526,22 @@ exception.stacktrace
 - OpenTelemetry SDK 설정
 - FastAPI instrumentation
 - OTLP exporter 설정
-- request_id/trace_id/span_id 로그 연결
+- middleware가 보관한 request context와 trace_id/span_id 로그 연결
 - `packages/errors`의 exception context를 span/log/Sentry event에 반영하는 adapter
 - Kafka/HTTP propagation helper
+
+`packages/middleware`가 소유한다.
+
+- 요청 단위 `request_id`, `client_action_id` context 보관
+- 응답 `X-Request-Id` echo
+- 처리되지 않은 일반 `Exception`의 500 response recovery
+- timeout/body guard 같은 ASGI runtime middleware
+
+`packages/middleware`에 넣지 않는다.
+
+- OpenTelemetry, structlog, Sentry 직접 연동
+- 인증, CORS, TLS, rate limit, WAF성 필터링
+- domain exception context attach/extract 로직
 
 `packages/errors`가 소유한다.
 
@@ -568,14 +581,15 @@ exception.stacktrace
 ## 구현 순서
 
 1. `packages/errors`를 만들고 `samber/oops`를 참고한 exception context builder와 extraction protocol을 설계한다.
-2. `packages/observability`를 만들고 FastAPI inbound trace와 request log correlation을 고정한다.
-3. 기존 `packages/server`의 관측성 코드는 `packages/observability`로 이동하고, 운영 endpoint 책임만 `packages/server`에 남긴다.
-4. exception handler가 current span, JSON log, Sentry event에 exception context를 기록하도록 공통화한다.
-5. 서비스별 error response shape와 request_id 사용 방식을 정렬한다.
-6. Kafka producer/consumer adapter에서 header propagation을 추가한다.
-7. dashboard `client_action_id` header 정책을 정한다.
-8. 필요한 서비스 간 HTTP client propagation을 추가한다.
-9. 운영상 필요한 custom span만 제한적으로 추가한다.
+2. `packages/middleware`를 만들고 request context, response header, runtime recovery를 ASGI 경계로 고정한다.
+3. `packages/observability`를 만들고 FastAPI inbound trace와 request log correlation을 고정한다.
+4. 기존 `packages/server`의 관측성 코드는 `packages/observability` 또는 `packages/middleware`로 이동하고, 운영 endpoint 책임만 `packages/server`에 남긴다.
+5. exception handler가 current span, JSON log, Sentry event에 exception context를 기록하도록 공통화한다.
+6. 서비스별 error response shape와 request_id 사용 방식을 정렬한다.
+7. Kafka producer/consumer adapter에서 header propagation을 추가한다.
+8. dashboard `client_action_id` header 정책을 정한다.
+9. 필요한 서비스 간 HTTP client propagation을 추가한다.
+10. 운영상 필요한 custom span만 제한적으로 추가한다.
 
 ## 참고
 
