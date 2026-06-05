@@ -7,7 +7,12 @@ from observability import (
     create_request_log_middleware,
     instrument_fastapi_app,
 )
-from server import install_runtime_middleware
+from server import (
+    RequestContextMiddleware,
+    ResponseHeadersMiddleware,
+    RuntimeRecoveryMiddleware,
+    request_context_middleware_options,
+)
 
 
 def configure_app_observability(app: FastAPI, config: ObservabilityConfig) -> None:
@@ -20,5 +25,7 @@ def configure_app_observability(app: FastAPI, config: ObservabilityConfig) -> No
     app.middleware("http")(create_request_log_middleware(config))
     # 예외 기록은 복구 응답보다 안쪽에서 수행하고, 응답 생성은 RuntimeRecoveryMiddleware에 맡긴다.
     app.add_middleware(ErrorRecordingMiddleware, service_name=config.service_name)
-    # 공통 런타임 미들웨어도 서비스 부트스트랩에서 붙인다. 관측성 패키지가 app에 직접 주입하지 않는다.
-    install_runtime_middleware(app)
+    # FastAPI는 마지막에 등록한 미들웨어를 요청 처리 때 먼저 실행한다.
+    app.add_middleware(RuntimeRecoveryMiddleware)
+    app.add_middleware(ResponseHeadersMiddleware)
+    app.add_middleware(RequestContextMiddleware, **request_context_middleware_options())

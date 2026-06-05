@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from concurrent.futures import CancelledError as FutureCancelledError
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
@@ -17,7 +17,6 @@ from middleware import (
     get_current_client_action_id,
     get_current_request_context,
     get_current_request_id,
-    install_runtime_middleware,
 )
 from middleware.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -93,18 +92,6 @@ def test_runtime_recovery_reraises_after_response_started() -> None:
         _call(_runtime_stack(failing_after_start))
 
 
-def test_install_runtime_middleware_adds_expected_stack() -> None:
-    app = RecordingFastAPIApp()
-
-    install_runtime_middleware(app)
-
-    assert [entry.middleware_class for entry in app.middleware] == [
-        RuntimeRecoveryMiddleware,
-        ResponseHeadersMiddleware,
-        RequestContextMiddleware,
-    ]
-
-
 async def _context_echo_app(scope: Scope, receive: Receive, send: Send) -> None:
     body = json.dumps(
         {
@@ -162,20 +149,6 @@ def _call(app: ASGIApp, *, headers: dict[str, str] | None = None) -> list[Messag
         return messages
 
     return asyncio.run(run())
-
-
-@dataclass(frozen=True)
-class MiddlewareRecord:
-    middleware_class: type[object]
-    options: dict[str, object] = field(default_factory=dict)
-
-
-@dataclass
-class RecordingFastAPIApp:
-    middleware: list[MiddlewareRecord] = field(default_factory=list)
-
-    def add_middleware(self, middleware_class: type[object], **options: object) -> None:
-        self.middleware.append(MiddlewareRecord(middleware_class, options))
 
 
 @dataclass(frozen=True)

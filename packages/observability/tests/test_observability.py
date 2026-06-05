@@ -6,7 +6,12 @@ import logging
 from errors import in_domain
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from middleware import install_runtime_middleware
+from middleware import (
+    RequestContextMiddleware,
+    ResponseHeadersMiddleware,
+    RuntimeRecoveryMiddleware,
+    request_context_middleware_options,
+)
 
 from observability import error_context as error_context_module
 from observability import exceptions as exceptions_module
@@ -329,7 +334,9 @@ def _observed_app(config: ObservabilityConfig) -> FastAPI:
     configure_process_tracing(config)
     instrument_fastapi_app(app)
     app.middleware("http")(create_request_log_middleware(config))
-    install_runtime_middleware(app)
+    app.add_middleware(RuntimeRecoveryMiddleware)
+    app.add_middleware(ResponseHeadersMiddleware)
+    app.add_middleware(RequestContextMiddleware, **request_context_middleware_options())
     return app
 
 

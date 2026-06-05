@@ -13,7 +13,7 @@ from server.middleware import (
     RuntimeRecoveryMiddleware,
     get_current_client_action_id,
     get_current_request_context,
-    install_runtime_middleware,
+    request_context_middleware_options,
 )
 from server.observability import (
     OBSERVABILITY_ENV_KEYS,
@@ -52,9 +52,9 @@ __all__ = [
     "get_current_request_context",
     "get_current_request_id",
     "instrument_fastapi_app",
-    "install_runtime_middleware",
     "observability_config_from_env",
     "register_operational_handlers",
+    "request_context_middleware_options",
     "request_id_middleware_options",
     "required_settings_readiness_check",
     "sqlalchemy_readiness_check",
