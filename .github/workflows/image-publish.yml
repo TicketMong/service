@@ -97,9 +97,6 @@ jobs:
           role-to-assume: arn:aws:iam::941141115079:role/github-actions-ecr-role
           aws-region: ap-northeast-2
 
-      - name: Docker Buildx 설정
-        uses: docker/setup-buildx-action@v3
-
       - name: ECR 로그인
         uses: aws-actions/amazon-ecr-login@v2
 
@@ -115,6 +112,12 @@ jobs:
             IMAGE_REGISTRY="${IMAGE_REGISTRY}" \
             IMAGE_TAG="${IMAGE_TAG}"
 
+      - name: Docker 이미지 push
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_ref="${IMAGE_REGISTRY}/${{ matrix.image }}:${IMAGE_TAG}"
+          docker push "${image_ref}"
 
       - name: digest 수집 및 deploy plan 작성
         id: deploy-plan
@@ -124,19 +127,15 @@ jobs:
           image="${{ matrix.image }}"
           image_ref="${IMAGE_REGISTRY}/${image}:${IMAGE_TAG}"
 
-          repo_digest="$(docker image inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' "${image_ref}" | head -n 1 || true)"
           digest=""
           digest_source=""
-          if [ -n "${repo_digest}" ]; then
-            digest="${repo_digest##*@}"
-            digest_source="RepoDigests"
-          else
-            digest="$(curl -fsSI \
-              -H 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' \
-              "http://${IMAGE_REGISTRY}/v2/${image}/manifests/${IMAGE_TAG}" \
-              | awk -F': ' 'tolower($1) == "docker-content-digest" { gsub("\r", "", $2); print $2; exit }')"
-            digest_source="registry-head"
-          fi
+          digest="$(aws ecr describe-images \
+            --region "${AWS_REGION}" \
+            --repository-name "${image}" \
+            --image-ids imageTag="${IMAGE_TAG}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)"
+          digest_source="ecr-api"
 
           if [ -z "${digest}" ]; then
             printf 'push된 이미지 digest를 확인할 수 없습니다: %s\n' "${image_ref}" >&2
