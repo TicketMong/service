@@ -7,6 +7,7 @@ SafeErrorContext = Mapping[str, str | int | float | bool | None]
 
 @runtime_checkable
 class SupportsErrorContext(Protocol):
+    # This protocol is the future adapter seam; packages/errors must not depend on FastAPI or OpenTelemetry.
     def observability_context(self) -> SafeErrorContext:
         ...
 

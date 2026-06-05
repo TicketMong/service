@@ -20,9 +20,12 @@ def get_current_request_id() -> str | None:
 
 
 def setup_request_observability(app: FastAPI, config: ObservabilityConfig) -> None:
+    # Service apps call this single boundary instead of importing OpenTelemetry details in business code.
     configure_structured_logging()
     configure_tracing(config)
+    # Inbound request spans are automatic; manual spans stay out of service layers until a use case proves it.
     _instrument_fastapi(app)
+    # Request IDs are kept separate from trace IDs for support tickets, access logs, and client-visible lookup.
     app.add_middleware(
         CorrelationIdMiddleware,
         header_name=REQUEST_ID_HEADER,
@@ -48,6 +51,7 @@ def setup_request_observability(app: FastAPI, config: ObservabilityConfig) -> No
         finally:
             route = _route_template(request)
             duration_seconds = perf_counter() - started_at
+            # Logs go through stdout while traces go through OTLP, so IDs are the join keys across Loki and Tempo.
             trace_id, span_id = current_trace_context()
             logger.info(
                 "http.request.completed",

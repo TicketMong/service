@@ -12,9 +12,11 @@ _tracing_configured = False
 def configure_tracing(config: ObservabilityConfig) -> None:
     global _tracing_configured
 
+    # Tracer providers are process-wide; keep setup idempotent and let env config disable the SDK explicitly.
     if _tracing_configured or config.otel_sdk_disabled:
         return
 
+    # Resource attributes are the stable service identity used when searching traces in Tempo/Grafana.
     attributes: dict[str, str] = {SERVICE_NAME: config.service_name}
     if config.service_version:
         attributes[SERVICE_VERSION] = config.service_version
@@ -23,6 +25,7 @@ def configure_tracing(config: ObservabilityConfig) -> None:
 
     provider = TracerProvider(resource=Resource.create(attributes))
     if _otlp_trace_export_enabled(config):
+        # Export only from the resolved config so exporter internals do not silently reinterpret env vars.
         provider.add_span_processor(BatchSpanProcessor(_otlp_span_exporter(config.otlp_trace_exporter_endpoint)))
     trace.set_tracer_provider(provider)
     _tracing_configured = True
@@ -36,6 +39,7 @@ def current_trace_context() -> tuple[str, str]:
 
 
 def _otlp_trace_export_enabled(config: ObservabilityConfig) -> bool:
+    # Keep the exporter allowlist narrow: only explicit OTLP plus an endpoint should leave the process.
     traces_exporter = config.otel_traces_exporter.strip().lower()
     if traces_exporter == "none":
         return False

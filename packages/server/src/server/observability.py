@@ -1,3 +1,9 @@
+"""Compatibility exports for services that still import server.observability.
+
+The implementation lives in packages/observability so packages/server can stay
+focused on operational endpoints, readiness, and metrics.
+"""
+
 from observability import (
     OBSERVABILITY_ENV_KEYS,
     REQUEST_ID_HEADER,
