@@ -115,12 +115,6 @@ jobs:
             IMAGE_REGISTRY="${IMAGE_REGISTRY}" \
             IMAGE_TAG="${IMAGE_TAG}"
 
-      - name: Docker 이미지 push
-        shell: bash
-        run: |
-          set -euo pipefail
-          image_ref="${IMAGE_REGISTRY}/${{ matrix.image }}:${IMAGE_TAG}"
-          docker push "${image_ref}"
 
       - name: digest 수집 및 deploy plan 작성
         id: deploy-plan
