@@ -12,6 +12,7 @@ ENV PATH="/opt/venv/bin:${PATH}"
 COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
 
 COPY services/reservation-service/pyproject.toml services/reservation-service/uv.lock ./services/reservation-service/
+COPY packages/observability ./packages/observability
 COPY packages/server ./packages/server
 WORKDIR /build/services/reservation-service
 RUN uv sync --frozen --no-dev --no-install-project --no-editable

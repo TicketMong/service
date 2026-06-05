@@ -10,6 +10,8 @@ COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
 
 COPY packages/server/pyproject.toml packages/server/pyproject.toml
 COPY packages/server/src packages/server/src
+COPY packages/observability/pyproject.toml packages/observability/pyproject.toml
+COPY packages/observability/src packages/observability/src
 COPY packages/contracts/pyproject.toml packages/contracts/pyproject.toml
 COPY packages/contracts/src packages/contracts/src
 COPY services/auth-service/requirements.txt services/auth-service/requirements.txt
@@ -30,6 +32,7 @@ RUN python -m pip install --no-cache-dir --root-user-action=ignore --upgrade pip
       "/opt/test-envs/${service}/bin/python" -m pip install --no-cache-dir --upgrade pip; \
       "/opt/test-envs/${service}/bin/python" -m pip install --no-cache-dir --root-user-action=ignore \
         ./packages/contracts \
+        ./packages/observability \
         ./packages/server \
         -r "services/${service}/requirements.txt" \
         -r "services/${service}/requirements-test.txt"; \

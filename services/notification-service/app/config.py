@@ -7,7 +7,7 @@ from contracts.events import (
     RESERVATION_EXPIRED_TOPIC,
     TICKET_ISSUED_TOPIC,
 )
-from server.observability import ObservabilityConfig, observability_config_from_env
+from observability import ObservabilityConfig, observability_config_from_env
 
 
 class Settings:

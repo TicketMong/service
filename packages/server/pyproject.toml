@@ -4,15 +4,10 @@ version = "0.1.0"
 description = "Shared FastAPI server utilities for services"
 requires-python = ">=3.12"
 dependencies = [
-    "asgi-correlation-id==5.0.0",
     "fastapi==0.124.0",
-    "opentelemetry-exporter-otlp==1.42.1",
-    "opentelemetry-instrumentation-fastapi==0.63b1",
-    "opentelemetry-instrumentation-logging==0.63b1",
-    "opentelemetry-sdk==1.42.1",
+    "observability",
     "prometheus-client==0.23.1",
     "sqlalchemy>=2.0.41,<3.0.0",
-    "structlog==25.5.0",
 ]
 
 [dependency-groups]
@@ -21,9 +16,12 @@ test = [
     "pytest==9.0.2",
 ]
 
+[tool.uv.sources]
+observability = { path = "../observability", editable = true }
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "../observability/src"]

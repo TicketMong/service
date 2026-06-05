@@ -5,7 +5,7 @@ from server.operational import (
     required_settings_readiness_check,
     sqlalchemy_readiness_check,
 )
-from server.observability import setup_request_observability
+from observability import setup_request_observability
 
 from app.config import settings
 from app.database import engine, init_db
