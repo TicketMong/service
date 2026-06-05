@@ -1,5 +1,18 @@
-from observability import ObservabilityConfig, get_current_request_id, setup_request_observability
+from fastapi import FastAPI
+from observability import (
+    ObservabilityConfig,
+    RequestIdMiddleware,
+    configure_process_logging,
+    configure_process_tracing,
+    create_request_log_middleware,
+    instrument_fastapi_app,
+    request_id_middleware_options,
+)
 
 
-def setup_request_logging(app, config: ObservabilityConfig) -> None:
-    setup_request_observability(app, config)
+def configure_app_observability(app: FastAPI, config: ObservabilityConfig) -> None:
+    configure_process_logging()
+    configure_process_tracing(config)
+    instrument_fastapi_app(app)
+    app.add_middleware(RequestIdMiddleware, **request_id_middleware_options())
+    app.middleware("http")(create_request_log_middleware(config))

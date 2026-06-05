@@ -1,3 +1,4 @@
+from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from time import perf_counter
 from uuid import uuid4
@@ -5,13 +6,16 @@ from uuid import uuid4
 import structlog
 from asgi_correlation_id import CorrelationIdMiddleware, correlation_id
 from fastapi import FastAPI, Request
+from starlette.responses import Response
 
 from observability.config import ObservabilityConfig
-from observability.logging import configure_structured_logging
-from observability.tracing import configure_tracing, current_trace_context
+from observability.tracing import current_trace_context
 
 
 REQUEST_ID_HEADER = "X-Request-Id"
+RequestIdMiddleware = CorrelationIdMiddleware
+RequestHandler = Callable[[Request], Awaitable[Response]]
+RequestMiddleware = Callable[[Request, RequestHandler], Awaitable[Response]]
 request_id_context: ContextVar[str | None] = ContextVar("request_id", default=None)
 
 
@@ -19,23 +23,25 @@ def get_current_request_id() -> str | None:
     return request_id_context.get()
 
 
-def setup_request_observability(app: FastAPI, config: ObservabilityConfig) -> None:
-    # Service apps call this single boundary instead of importing OpenTelemetry details in business code.
-    configure_structured_logging()
-    configure_tracing(config)
+def instrument_fastapi_app(app: FastAPI) -> None:
     # Inbound request spans are automatic; manual spans stay out of service layers until a use case proves it.
-    _instrument_fastapi(app)
-    # Request IDs are kept separate from trace IDs for support tickets, access logs, and client-visible lookup.
-    app.add_middleware(
-        CorrelationIdMiddleware,
-        header_name=REQUEST_ID_HEADER,
-        update_request_header=True,
-        validator=_valid_request_id,
-    )
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
+    FastAPIInstrumentor.instrument_app(app)
+
+
+def request_id_middleware_options() -> dict[str, object]:
+    # Request IDs are kept separate from trace IDs for support tickets, access logs, and client-visible lookup.
+    return {
+        "header_name": REQUEST_ID_HEADER,
+        "update_request_header": True,
+        "validator": _valid_request_id,
+    }
+
+
+def create_request_log_middleware(config: ObservabilityConfig) -> RequestMiddleware:
     logger = structlog.get_logger(config.service_name)
 
-    @app.middleware("http")
     async def request_observability_middleware(request: Request, call_next):
         request_id = _request_id(request)
         request.state.request_id = request_id
@@ -70,11 +76,7 @@ def setup_request_observability(app: FastAPI, config: ObservabilityConfig) -> No
             )
             request_id_context.reset(request_id_token)
 
-
-def _instrument_fastapi(app: FastAPI) -> None:
-    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-
-    FastAPIInstrumentor.instrument_app(app)
+    return request_observability_middleware
 
 
 def _request_id(request: Request) -> str:

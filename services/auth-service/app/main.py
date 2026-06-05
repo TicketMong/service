@@ -11,7 +11,7 @@ from app.audit import record_audit
 from app.config import settings
 from app.database import SessionLocal, engine, get_db
 from app.models import AuditLog, RefreshToken, RevokedToken, User
-from app.observability import setup_request_logging
+from app.observability import configure_app_observability
 from app.schemas import (
     AuditLogResponse,
     DemoAccountResponse,
@@ -30,7 +30,7 @@ with SessionLocal() as seed_db:
     seed_demo_users(seed_db)
 
 app = FastAPI(title=settings.service_name)
-setup_request_logging(app, settings.observability_config())
+configure_app_observability(app, settings.observability_config())
 register_operational_handlers(
     app,
     service_name=settings.service_name,

@@ -5,11 +5,11 @@ from server.operational import (
     required_settings_readiness_check,
     sqlalchemy_readiness_check,
 )
-from observability import setup_request_observability
 
 from app.config import settings
 from app.database import engine, init_db
 from app.exceptions import register_exception_handlers
+from app.observability import configure_app_observability
 from app.routers import router as concert_router
 
 
@@ -28,7 +28,7 @@ def _readiness_checks() -> dict[str, ReadinessCheck]:
 def create_app() -> FastAPI:
     init_db()
     app = FastAPI(title=settings.service_name)
-    setup_request_observability(app, settings.observability_config())
+    configure_app_observability(app, settings.observability_config())
     register_exception_handlers(app)
     register_operational_handlers(
         app,

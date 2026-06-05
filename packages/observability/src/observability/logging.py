@@ -7,7 +7,7 @@ _logging_configured = False
 _logging_instrumented = False
 
 
-def configure_structured_logging() -> None:
+def configure_process_logging() -> None:
     global _logging_configured, _logging_instrumented
 
     if not _logging_instrumented:
@@ -29,6 +29,9 @@ def configure_structured_logging() -> None:
         cache_logger_on_first_use=True,
     )
     _logging_configured = True
+
+
+configure_structured_logging = configure_process_logging
 
 
 def _instrument_logging() -> None:

@@ -4,9 +4,19 @@ import logging
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from observability import OBSERVABILITY_ENV_KEYS, ObservabilityConfig, observability_config_from_env, setup_request_observability
+from observability import (
+    OBSERVABILITY_ENV_KEYS,
+    ObservabilityConfig,
+    RequestIdMiddleware,
+    configure_process_logging,
+    configure_process_tracing,
+    create_request_log_middleware,
+    instrument_fastapi_app,
+    observability_config_from_env,
+    request_id_middleware_options,
+)
 from observability import tracing as tracing_module
-from observability.tracing import _otlp_trace_export_enabled, configure_tracing
+from observability.tracing import _otlp_trace_export_enabled
 
 
 def test_observability_config_from_env_maps_explicit_otel_settings() -> None:
@@ -100,7 +110,7 @@ def test_configure_tracing_passes_explicit_otlp_trace_endpoint(monkeypatch) -> N
     monkeypatch.setattr(tracing_module, "TracerProvider", FakeTracerProvider)
     monkeypatch.setattr(tracing_module.trace, "set_tracer_provider", providers.append)
 
-    configure_tracing(
+    configure_process_tracing(
         ObservabilityConfig(
             service_name="test-service",
             otel_traces_exporter="otlp",
@@ -123,7 +133,7 @@ def test_configure_tracing_skips_unsupported_trace_exporter(monkeypatch) -> None
     monkeypatch.setattr(tracing_module, "_otlp_span_exporter", fake_otlp_span_exporter)
     monkeypatch.setattr(tracing_module.trace, "set_tracer_provider", lambda provider: None)
 
-    configure_tracing(
+    configure_process_tracing(
         ObservabilityConfig(
             service_name="test-service",
             otel_traces_exporter="zipkin",
@@ -135,8 +145,7 @@ def test_configure_tracing_skips_unsupported_trace_exporter(monkeypatch) -> None
 
 
 def test_request_observability_emits_single_line_json_log(caplog) -> None:
-    app = FastAPI()
-    setup_request_observability(app, ObservabilityConfig(service_name="test-service"))
+    app = _observed_app(ObservabilityConfig(service_name="test-service"))
 
     @app.get("/items/{item_id}")
     def get_item(item_id: str) -> dict[str, str]:
@@ -163,8 +172,7 @@ def test_request_observability_emits_single_line_json_log(caplog) -> None:
 
 
 def test_request_observability_logs_failed_request_fields(caplog) -> None:
-    app = FastAPI()
-    setup_request_observability(app, ObservabilityConfig(service_name="test-service"))
+    app = _observed_app(ObservabilityConfig(service_name="test-service"))
     caplog.set_level(logging.INFO)
     client = TestClient(app)
 
@@ -179,6 +187,16 @@ def test_request_observability_logs_failed_request_fields(caplog) -> None:
     assert log["severity"] == "INFO"
     assert log["http.status_code"] == 404
     assert isinstance(log["duration_ms"], int)
+
+
+def _observed_app(config: ObservabilityConfig) -> FastAPI:
+    app = FastAPI()
+    configure_process_logging()
+    configure_process_tracing(config)
+    instrument_fastapi_app(app)
+    app.add_middleware(RequestIdMiddleware, **request_id_middleware_options())
+    app.middleware("http")(create_request_log_middleware(config))
+    return app
 
 
 def _request_log(records: list[logging.LogRecord]) -> dict[str, object]:

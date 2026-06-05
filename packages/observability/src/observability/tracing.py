@@ -9,7 +9,7 @@ from observability.config import ObservabilityConfig
 _tracing_configured = False
 
 
-def configure_tracing(config: ObservabilityConfig) -> None:
+def configure_process_tracing(config: ObservabilityConfig) -> None:
     global _tracing_configured
 
     # Tracer providers are process-wide; keep setup idempotent and let env config disable the SDK explicitly.
@@ -29,6 +29,9 @@ def configure_tracing(config: ObservabilityConfig) -> None:
         provider.add_span_processor(BatchSpanProcessor(_otlp_span_exporter(config.otlp_trace_exporter_endpoint)))
     trace.set_tracer_provider(provider)
     _tracing_configured = True
+
+
+configure_tracing = configure_process_tracing
 
 
 def current_trace_context() -> tuple[str, str]:
