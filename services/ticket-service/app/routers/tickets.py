@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import UserContext, get_user_context
 from app.database import get_db
+from app.kafka import KafkaProducer, get_kafka_producer
 from app.schemas import TicketIssueRequest, TicketResponse
 from app.services import ticket_service
 
@@ -15,8 +16,9 @@ router = APIRouter(prefix="/tickets", tags=["tickets"])
 async def issue_ticket(
     request: TicketIssueRequest,
     db: Session = Depends(get_db),
+    kafka_producer: KafkaProducer = Depends(get_kafka_producer),
 ) -> TicketResponse:
-    return await ticket_service.issue_ticket(db, request)
+    return await ticket_service.issue_ticket(db, request, kafka_producer)
 
 
 # 내 티켓 목록 조회

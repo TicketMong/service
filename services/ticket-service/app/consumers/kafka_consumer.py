@@ -1,21 +1,36 @@
 import asyncio
+from collections.abc import Awaitable, Callable, Mapping
 import json
+from typing import Any
+
 from aiokafka import AIOKafkaConsumer
-from observability import kafka_message_attributes, record_exception, set_current_span_attributes, start_consumer_span
-
-from app.config import settings
-from app.database import SessionLocal
-from app.services.ticket_service import handle_payment_approved
+from kafka_utils import kafka_message_attributes, start_consumer_span
+from observability import record_exception, set_current_span_attributes
 
 
-async def consume_events(stop_event: asyncio.Event) -> None:
-    if not settings.kafka_bootstrap_servers:
+EventHandler = Callable[[dict], Awaitable[None]]
+EventHandlers = Mapping[str, EventHandler]
+ConsumerFactory = Callable[..., Any]
+
+
+async def consume_events(
+    stop_event: asyncio.Event,
+    *,
+    bootstrap_servers: str,
+    group_id: str,
+    service_name: str,
+    handlers: EventHandlers,
+    consumer_factory: ConsumerFactory = AIOKafkaConsumer,
+) -> None:
+    if not bootstrap_servers:
         return
+    if not handlers:
+        raise ValueError("consume_events requires at least one topic handler")
 
-    consumer = AIOKafkaConsumer(
-        settings.payment_approved_topic,
-        bootstrap_servers=settings.kafka_bootstrap_servers,
-        group_id=settings.kafka_group_id,
+    consumer = consumer_factory(
+        *handlers.keys(),
+        bootstrap_servers=bootstrap_servers,
+        group_id=group_id,
         value_deserializer=lambda value: json.loads(value.decode("utf-8")),
     )
 
@@ -24,14 +39,14 @@ async def consume_events(stop_event: asyncio.Event) -> None:
         async for message in consumer:
             with start_consumer_span(message):
                 set_current_span_attributes({"event.type": str(message.value.get("eventType", "")) or None})
-                db = SessionLocal()
                 try:
-                    await handle_payment_approved(db, message.value)
+                    handler = handlers.get(message.topic)
+                    if handler is None:
+                        raise ValueError(f"No Kafka event handler is bound for topic: {message.topic}")
+                    await handler(message.value)
                 except Exception as exc:
-                    record_exception(exc, service_name=settings.service_name, attributes=kafka_message_attributes(message))
+                    record_exception(exc, service_name=service_name, attributes=kafka_message_attributes(message))
                     raise
-                finally:
-                    db.close()
             if stop_event.is_set():
                 break
     finally:

@@ -10,9 +10,9 @@ os.environ["JWT_SECRET"] = "ticketing-dev-secret"
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.database import Base, SessionLocal, engine  # noqa: E402
-import app.main as payment_app  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import PaymentEvent  # noqa: E402
+from app.kafka import get_kafka_producer  # noqa: E402
 
 
 client = TestClient(app)
@@ -22,16 +22,12 @@ client = TestClient(app)
 def reset_db() -> None:
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+    app.dependency_overrides.clear()
 
 
-def test_create_and_get_approved_payment(monkeypatch: pytest.MonkeyPatch) -> None:
-    published: list[tuple[str, dict]] = []
-
-    async def fake_publish(topic: str, payload: dict) -> bool:
-        published.append((topic, payload))
-        return True
-
-    monkeypatch.setattr(payment_app.kafka, "publish_event", fake_publish)
+def test_create_and_get_approved_payment() -> None:
+    producer = FakeKafkaProducer()
+    app.dependency_overrides[get_kafka_producer] = lambda: producer
     headers = auth_headers("CUSTOMER", user_id="1")
     response = client.post(
         "/payments",
@@ -53,9 +49,10 @@ def test_create_and_get_approved_payment(monkeypatch: pytest.MonkeyPatch) -> Non
     assert payment["status"] == "approved"
     assert payment["approvedAt"] is not None
     assert payment_events() == ["payment-approved"]
-    assert published[0][0] == "payment-approved"
-    assert published[0][1]["reservationId"] == "res-1"
-    assert published[0][1]["seatId"] == "seat-A1"
+    assert producer.sent[0][0] == "payment-approved"
+    assert producer.sent[0][1]["reservationId"] == "res-1"
+    assert producer.sent[0][1]["seatId"] == "seat-A1"
+    assert dict(producer.sent[0][2])["correlation_id"] == producer.sent[0][1]["correlationId"].encode("utf-8")
 
     get_response = client.get(f"/payments/{payment['id']}", headers=headers)
     assert get_response.status_code == 200
@@ -185,3 +182,11 @@ def auth_headers(role: str, user_id: str = "1") -> dict[str, str]:
 def payment_events() -> list[str]:
     with SessionLocal() as db:
         return [event.event_type for event in db.query(PaymentEvent).order_by(PaymentEvent.created_at).all()]
+
+
+class FakeKafkaProducer:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, dict, list[tuple[str, bytes]]]] = []
+
+    async def send_and_wait(self, topic: str, payload: dict, *, headers: list[tuple[str, bytes]]) -> None:
+        self.sent.append((topic, payload, headers))

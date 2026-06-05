@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+import json
 from typing import Any
 
-from middleware import get_current_request_id
+from aiokafka import AIOKafkaProducer
 from opentelemetry import propagate, trace
 from opentelemetry.trace import Span, SpanKind
 
@@ -15,15 +16,29 @@ CORRELATION_ID_HEADER = "correlation_id"
 KafkaHeaders = list[tuple[str, bytes]]
 
 
-def build_producer_headers(
-    payload: Mapping[str, Any],
+def create_kafka_producer(
+    bootstrap_servers: str,
     *,
-    correlation_id: str | None = None,
-) -> KafkaHeaders:
+    client_id: str | None = None,
+    producer_factory: Callable[..., AIOKafkaProducer] = AIOKafkaProducer,
+) -> AIOKafkaProducer | None:
+    if not bootstrap_servers:
+        return None
+
+    producer_kwargs: dict[str, object] = {
+        "bootstrap_servers": bootstrap_servers,
+        "value_serializer": _json_serializer,
+    }
+    if client_id is not None:
+        producer_kwargs["client_id"] = client_id
+    return producer_factory(**producer_kwargs)
+
+
+def build_producer_headers(*, correlation_id: str | None = None) -> KafkaHeaders:
     carrier: dict[str, str] = {}
     propagate.inject(carrier)
 
-    resolved_correlation_id = correlation_id or _string_value(payload.get("correlationId")) or get_current_request_id()
+    resolved_correlation_id = _string_value(correlation_id)
     if resolved_correlation_id:
         carrier[CORRELATION_ID_HEADER] = resolved_correlation_id
 
@@ -45,7 +60,7 @@ def start_consumer_span(message: Any, *, name: str | None = None) -> Iterator[Sp
     topic = str(getattr(message, "topic", "unknown"))
     carrier = headers_to_carrier(getattr(message, "headers", None))
     parent_context = propagate.extract(carrier)
-    tracer = trace.get_tracer("observability.kafka")
+    tracer = trace.get_tracer("kafka_utils.consumer")
     span_name = name or f"kafka.consume {topic}"
 
     with tracer.start_as_current_span(
@@ -75,6 +90,10 @@ def kafka_message_attributes(message: Any, *, carrier: Mapping[str, str] | None 
     if correlation_id:
         attributes[CORRELATION_ID_HEADER] = correlation_id
     return attributes
+
+
+def _json_serializer(value: object) -> bytes:
+    return json.dumps(value, separators=(",", ":")).encode("utf-8")
 
 
 def _string_value(value: object) -> str | None:

@@ -1,3 +1,6 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from server.operational import (
     ReadinessCheck,
@@ -9,6 +12,7 @@ from server.operational import (
 from app.config import settings
 from app.database import engine, init_db
 from app.exceptions import register_exception_handlers
+from app.kafka import create_producer
 from app.observability import configure_app_observability
 from app.routers import router as reservation_router
 
@@ -25,9 +29,22 @@ def _readiness_checks() -> dict[str, ReadinessCheck]:
     }
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    producer = app.state.kafka_producer
+    if producer is not None:
+        await producer.start()
+    try:
+        yield
+    finally:
+        if producer is not None:
+            await producer.stop()
+
+
 def create_app() -> FastAPI:
     init_db()
-    app = FastAPI(title=settings.service_name)
+    app = FastAPI(title=settings.service_name, lifespan=lifespan)
+    app.state.kafka_producer = create_producer()
     configure_app_observability(app, settings.observability_config())
     register_exception_handlers(app)
     register_operational_handlers(

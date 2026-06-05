@@ -1,7 +1,8 @@
 import asyncio
 import json
 from aiokafka import AIOKafkaConsumer
-from observability import kafka_message_attributes, record_exception, set_current_span_attributes, start_consumer_span
+from kafka_utils import kafka_message_attributes, start_consumer_span
+from observability import record_exception, set_current_span_attributes
 
 from app.config import settings
 from app.database import get_db

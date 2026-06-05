@@ -10,7 +10,6 @@ from observability.fastapi import (
     request_id_middleware_options,
 )
 from observability.fastapi_errors import HttpError, error_response, register_error_handlers
-from observability.kafka import build_producer_headers, kafka_message_attributes, start_consumer_span
 from observability.logging import configure_process_logging, configure_structured_logging
 from observability.tracing import (
     NoopTraceRecorder,
@@ -29,7 +28,6 @@ __all__ = [
     "HttpError",
     "ObservabilityConfig",
     "NoopTraceRecorder",
-    "build_producer_headers",
     "configure_process_logging",
     "configure_process_tracing",
     "configure_structured_logging",
@@ -40,13 +38,11 @@ __all__ = [
     "instrument_motor_client",
     "instrument_fastapi_app",
     "instrument_sqlalchemy_engine",
-    "kafka_message_attributes",
     "observability_config_from_env",
     "record_exception",
     "register_error_handlers",
     "request_id_middleware_options",
     "set_current_span_attributes",
-    "start_consumer_span",
     "TraceRecorder",
     "trace_recorder",
 ]

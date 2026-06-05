@@ -1,21 +1,19 @@
-import json
 from aiokafka import AIOKafkaProducer
-from observability import build_producer_headers
+from fastapi import Request
+from kafka_utils import create_kafka_producer
 
 from app.config import settings
 
 
-async def publish_event(topic: str, payload: dict) -> bool:
-    if not settings.kafka_bootstrap_servers:
-        return False
+KafkaProducer = AIOKafkaProducer | None
 
-    producer = AIOKafkaProducer(
-        bootstrap_servers=settings.kafka_bootstrap_servers,
-        value_serializer=lambda value: json.dumps(value).encode("utf-8"),
+
+def create_producer() -> KafkaProducer:
+    return create_kafka_producer(
+        settings.kafka_bootstrap_servers,
+        client_id=settings.service_name,
     )
-    await producer.start()
-    try:
-        await producer.send_and_wait(topic, payload, headers=build_producer_headers(payload))
-        return True
-    finally:
-        await producer.stop()
+
+
+def get_kafka_producer(request: Request) -> KafkaProducer:
+    return request.app.state.kafka_producer

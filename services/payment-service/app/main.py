@@ -1,16 +1,20 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from kafka_utils import build_producer_headers
 from observability import register_error_handlers
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from server.operational import register_operational_handlers, sqlalchemy_readiness_check
 
-from app import kafka, models
+from app import models
 from app.auth import UserContext, require_role, require_user_context
 from app.config import settings
 from app.database import engine, get_db
+from app.kafka import KafkaProducer, create_producer, get_kafka_producer
 from app.models import Payment, PaymentEvent
 from app.observability import configure_app_observability
 from app.schemas import CreatePaymentRequest, PaymentResponse, SettlementBasisResponse
@@ -18,7 +22,21 @@ from app.schemas import CreatePaymentRequest, PaymentResponse, SettlementBasisRe
 
 models.Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title=settings.service_name)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    producer = app.state.kafka_producer
+    if producer is not None:
+        await producer.start()
+    try:
+        yield
+    finally:
+        if producer is not None:
+            await producer.stop()
+
+
+app = FastAPI(title=settings.service_name, lifespan=lifespan)
+app.state.kafka_producer = create_producer()
 configure_app_observability(app, settings.observability_config())
 register_error_handlers(
     app,
@@ -46,6 +64,7 @@ async def create_payment(
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     user: UserContext = Depends(require_user_context),
     db: Session = Depends(get_db),
+    kafka_producer: KafkaProducer = Depends(get_kafka_producer),
 ) -> PaymentResponse:
     require_role(user, {"CUSTOMER"})
 
@@ -93,8 +112,12 @@ async def create_payment(
     db.commit()
     db.refresh(payment)
     request.state.payment_event = event_name
-    if event_name is not None and event_payload is not None:
-        await kafka.publish_event(_payment_event_topic(event_name), event_payload)
+    if event_name is not None and event_payload is not None and kafka_producer is not None:
+        await kafka_producer.send_and_wait(
+            _payment_event_topic(event_name),
+            event_payload,
+            headers=build_producer_headers(correlation_id=event_payload.get("correlationId")),
+        )
     return PaymentResponse.model_validate(payment)
 
 

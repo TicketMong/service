@@ -16,12 +16,10 @@ from middleware import (
 from observability import error_context as error_context_module
 from observability import exceptions as exceptions_module
 from observability import fastapi as fastapi_module
-from observability import kafka as kafka_module
 from observability import (
     OBSERVABILITY_ENV_KEYS,
     ObservabilityConfig,
     NoopTraceRecorder,
-    build_producer_headers,
     configure_process_logging,
     configure_process_tracing,
     create_request_log_middleware,
@@ -312,20 +310,6 @@ def test_record_exception_marks_span_and_deduplicates(monkeypatch) -> None:
     assert span.status_code == "ERROR"
     assert span.attributes["error.type"] == "RuntimeError"
     assert span.attributes["error.domain"] == "test"
-
-
-def test_kafka_producer_headers_use_protocol_headers(monkeypatch) -> None:
-    def fake_inject(carrier: dict[str, str]) -> None:
-        carrier["traceparent"] = "00-trace-span-01"
-        carrier["tracestate"] = "vendor=value"
-
-    monkeypatch.setattr(kafka_module.propagate, "inject", fake_inject)
-
-    headers = dict(build_producer_headers({"eventId": "evt-1", "correlationId": "req-1"}))
-
-    assert headers[b"traceparent".decode()] == b"00-trace-span-01"
-    assert headers[b"tracestate".decode()] == b"vendor=value"
-    assert headers[b"correlation_id".decode()] == b"req-1"
 
 
 def _observed_app(config: ObservabilityConfig) -> FastAPI:

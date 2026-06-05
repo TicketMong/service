@@ -410,7 +410,7 @@ message headers:
 - `packages/errors`의 `ExceptionContext`를 `error.code`, `error.domain`, 안전한 `error.attr.*`로 변환
 - 공통 `record_exception()`과 `ErrorRecordingMiddleware`에서 span exception event, span status ERROR, structured error log를 한 번만 기록
 - `RuntimeRecoveryMiddleware`는 기록을 하지 않고 예상 못 한 예외를 500 JSON 응답으로만 변환
-- Kafka producer/consumer는 payload가 아니라 message header로 `traceparent`, `tracestate`, `correlation_id`를 전파
+- Kafka producer/consumer는 `packages/kafka-utils`를 통해 payload가 아니라 message header로 `traceparent`, `tracestate`, `correlation_id`를 전파
 - SQLAlchemy engine은 공통 DB instrumentation helper로 계측
 - notification-service의 Motor/Mongo는 PyMongo instrumentation helper를 통해 가능한 범위에서 계측
 - 대표 FastAPI 요청 1건에서 span 생성 smoke 확인
@@ -452,15 +452,20 @@ X-Client-Action-Id: act-...
 
 브라우저에서 직접 `traceparent`를 만드는 방식은 프론트엔드 OpenTelemetry/RUM, sampling, untrusted context 정책을 함께 정한 뒤 적용한다.
 
-### Kafka trace propagation
+### Kafka client lifecycle and trace propagation
 
-Kafka producer/consumer는 공통 adapter에서만 trace context를 다룬다.
+Kafka producer 생성자와 header propagation helper는 `packages/kafka-utils`가 소유한다. `packages/observability`는 Kafka producer를 만들거나 Kafka header helper를 export하지 않는다.
+
+FastAPI 서비스는 앱 생성 시 `packages/kafka-utils`의 생성자 유틸로 `AIOKafkaProducer | None`을 만들고, lifespan에서 producer가 있을 때만 `start()`와 `stop()`을 호출한다. HTTP endpoint나 service layer는 전역 producer에 의존하지 않고, FastAPI dependency 또는 함수 인자로 주입받은 producer를 사용한다.
+
+Kafka 설정이 없으면 생성자 유틸은 `None`을 반환한다. 호출부는 producer가 `None`이면 기존처럼 메시지를 보내지 않는다.
 
 Producer 책임:
 
 - 현재 context를 Kafka header에 inject
 - `correlation_id` header를 함께 전달
-- publish 실패 시 current span과 log에 topic/event id 기록
+- publish 호출마다 producer를 새로 만들지 않는다
+- publish 실패 시 topic/event id를 log에 남기고 예외를 전파한다
 
 Consumer 책임:
 
@@ -469,7 +474,7 @@ Consumer 책임:
 - fan-out 또는 장시간 처리면 span link와 business id를 사용한다
 - 처리 실패는 consumer span과 structured log에 한 번만 기록한다
 
-현재 repo는 `aiokafka`를 사용하지만 header propagation은 `packages/observability`의 helper로 직접 처리한다. payload에는 기존 업무 계약 필드만 유지한다.
+현재 repo는 `aiokafka`를 사용한다. payload에는 기존 업무 계약 필드만 유지하고, `traceparent`, `tracestate`, `correlation_id`는 Kafka message header로 전파한다.
 
 ### Kong Ingress trace boundary
 
@@ -584,8 +589,14 @@ exception.stacktrace
 - OTLP exporter 설정
 - middleware가 보관한 request context와 trace_id/span_id 로그 연결
 - `packages/errors`의 exception context를 span/log에 반영하는 adapter
-- Kafka propagation helper
 - SQLAlchemy/Mongo instrumentation helper
+
+`packages/kafka-utils`가 소유한다.
+
+- Kafka producer 생성자 유틸
+- JSON value serialization
+- Kafka message header propagation
+- Kafka consumer message context extraction helper
 
 `packages/middleware`가 소유한다.
 
@@ -625,6 +636,8 @@ exception.stacktrace
 개별 서비스가 소유한다.
 
 - `setup_request_observability(app, settings.observability_config())` 호출
+- FastAPI lifespan에서 Kafka producer 시작/종료
+- publish가 필요한 endpoint/service 경계에 Kafka producer 의존성 주입
 - 안전한 exception context code/domain/attributes 제공
 - 업무 식별자를 event payload와 response에 기존 계약대로 유지
 - 필요한 경우 공통 helper를 통한 boundary attribute 추가
