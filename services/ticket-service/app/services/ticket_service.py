@@ -1,18 +1,43 @@
+from collections.abc import Callable
 from uuid import uuid4
 from datetime import UTC, datetime
 
 from fastapi import HTTPException, status
+from kafka_utils import build_producer_headers
 from sqlalchemy.orm import Session
 from contracts.events import PaymentApprovedEvent, TicketIssuedEvent
 
-from app import kafka, s3
+from app import s3
 from app.auth import UserContext
 from app.config import settings
+from app.kafka import KafkaProducer
 from app.models import ProcessedEvent, Ticket
 from app.schemas import TicketIssueRequest
 
 
-async def issue_ticket(db: Session, request: TicketIssueRequest) -> Ticket:
+SessionFactory = Callable[[], Session]
+
+
+class PaymentApprovedEventHandler:
+    def __init__(self, db_session_factory: SessionFactory, kafka_producer: KafkaProducer) -> None:
+        self._db_session_factory = db_session_factory
+        self._kafka_producer = kafka_producer
+
+    async def __call__(self, payload: dict) -> None:
+        db = self._db_session_factory()
+        try:
+            await handle_payment_approved(db, payload, self._kafka_producer)
+        finally:
+            db.close()
+
+
+async def issue_ticket(
+    db: Session,
+    request: TicketIssueRequest,
+    kafka_producer: KafkaProducer,
+    *,
+    correlation_id: str | None = None,
+) -> Ticket:
     # 중복 발행 방지
     existing = db.query(Ticket).filter(
         Ticket.reservation_id == request.reservationId
@@ -38,7 +63,13 @@ async def issue_ticket(db: Session, request: TicketIssueRequest) -> Ticket:
     db.refresh(ticket)
 
     # ticket-issued 이벤트 발행
-    await kafka.publish_event(settings.ticket_issued_topic, _ticket_issued_event(ticket))
+    payload = _ticket_issued_event(ticket, correlation_id=correlation_id)
+    if kafka_producer is not None:
+        await kafka_producer.send_and_wait(
+            settings.ticket_issued_topic,
+            payload,
+            headers=build_producer_headers(correlation_id=correlation_id or payload.get("correlationId")),
+        )
 
     return ticket
 
@@ -58,7 +89,7 @@ def list_my_tickets(db: Session, user: UserContext) -> list[Ticket]:
     ).order_by(Ticket.id).all()
 
 
-async def handle_payment_approved(db: Session, payload: dict) -> None:
+async def handle_payment_approved(db: Session, payload: dict, kafka_producer: KafkaProducer) -> None:
     event = PaymentApprovedEvent.model_validate(payload)
 
     # idempotency: 이미 처리된 이벤트 중복 처리 방지
@@ -74,13 +105,13 @@ async def handle_payment_approved(db: Session, payload: dict) -> None:
         concertId=event.concertId,
         seatId=event.seatId,
     )
-    ticket = await issue_ticket(db, request)
+    ticket = await issue_ticket(db, request, kafka_producer, correlation_id=event.correlationId)
 
     db.add(ProcessedEvent(event_id=event.eventId, ticket_id=ticket.id))
     db.commit()
 
 
-def _ticket_issued_event(ticket: Ticket) -> dict:
+def _ticket_issued_event(ticket: Ticket, *, correlation_id: str | None = None) -> dict:
     return TicketIssuedEvent(
         eventId=str(uuid4()),
         userId=ticket.user_id,
@@ -91,4 +122,5 @@ def _ticket_issued_event(ticket: Ticket) -> dict:
         ticketId=str(ticket.id),
         occurredAt=datetime.now(UTC),
         producer=settings.service_name,
+        correlationId=correlation_id,
     ).model_dump(mode="json")

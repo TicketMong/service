@@ -1,5 +1,9 @@
 from datetime import timedelta
 
+from sqlalchemy.orm import Session
+
+from observability import TraceRecorder, trace_recorder
+
 from app import entities as model
 from app import schemas
 from app.exceptions import ConflictError
@@ -8,27 +12,42 @@ from app.services.serializers import active_seat_key, reservation_response
 
 
 class ReservationCommandService(ReservationDomainService):
+    def __init__(self, db: Session, trace: TraceRecorder | None = None) -> None:
+        super().__init__(db)
+        self.trace = trace or trace_recorder()
+
     def create_reservation(self, user_id: str, request: schemas.CreateReservationRequest) -> schemas.ReservationResponse:
-        sales_state = self.sales.get_sales_state(concert_id_from_request(request))
-        if sales_state is not None and sales_state.sales_status in {"paused", "closed"}:
-            raise ConflictError("sales.not_open", "Sales are not open for this concert.")
-        if self.reservations.find_active_reservation(request.performanceId, request.seatId) is not None:
-            raise ConflictError("reservation.conflict", "Seat is already reserved.", {"seatId": request.seatId})
-        created_at = now_utc()
-        reservation = model.Reservation(
-            id=new_id("rsv"),
-            user_id=user_id,
-            concert_id=concert_id_from_request(request),
-            showtime_id=request.showtimeId or request.performanceId,
-            performance_id=request.performanceId,
-            seat_id=request.seatId,
-            status="pending",
-            active_seat_key=active_seat_key(request.performanceId, request.seatId),
-            expires_at=created_at + timedelta(minutes=5),
-            created_at=created_at,
-        )
-        self.add(reservation)
-        self._commit_or_reservation_conflict()
+        trace = self.trace
+        concert_id = concert_id_from_request(request)
+        trace.attribute("app.use_case", "reserve_seat")
+        trace.attribute("concert.id", concert_id)
+        trace.attribute("performance.id", request.performanceId)
+        trace.attribute("seat.id", request.seatId)
+
+        with trace.span("reservation.reserve_seat"):
+            sales_state = self.sales.get_sales_state(concert_id)
+            if sales_state is not None and sales_state.sales_status in {"paused", "closed"}:
+                raise ConflictError("sales.not_open", "Sales are not open for this concert.")
+            if self.reservations.find_active_reservation(request.performanceId, request.seatId) is not None:
+                raise ConflictError("reservation.conflict", "Seat is already reserved.", {"seatId": request.seatId})
+            created_at = now_utc()
+            reservation = model.Reservation(
+                id=new_id("rsv"),
+                user_id=user_id,
+                concert_id=concert_id,
+                showtime_id=request.showtimeId or request.performanceId,
+                performance_id=request.performanceId,
+                seat_id=request.seatId,
+                status="pending",
+                active_seat_key=active_seat_key(request.performanceId, request.seatId),
+                expires_at=created_at + timedelta(minutes=5),
+                created_at=created_at,
+            )
+            self.add(reservation)
+            self._commit_or_reservation_conflict()
+            trace.attribute("reservation.id", reservation.id)
+            trace.event("seat.hold.created", {"reservation.id": reservation.id, "seat.id": reservation.seat_id})
+
         return reservation_response(reservation)
 
     def cancel_reservation(self, reservation_id: str) -> schemas.ReservationResponse:

@@ -1,0 +1,35 @@
+[project]
+name = "observability"
+version = "0.1.0"
+description = "Shared FastAPI observability utilities for services"
+requires-python = ">=3.12"
+dependencies = [
+    "asgi-correlation-id==5.0.0",
+    "errors",
+    "fastapi==0.124.0",
+    "middleware",
+    "opentelemetry-exporter-otlp==1.42.1",
+    "opentelemetry-instrumentation-fastapi==0.63b1",
+    "opentelemetry-instrumentation-logging==0.63b1",
+    "opentelemetry-instrumentation-pymongo==0.63b1",
+    "opentelemetry-instrumentation-sqlalchemy==0.63b1",
+    "opentelemetry-sdk==1.42.1",
+    "structlog==25.5.0",
+]
+
+[dependency-groups]
+test = [
+    "httpx==0.28.1",
+    "pytest==9.0.2",
+]
+
+[tool.uv.sources]
+errors = { path = "../errors", editable = true }
+middleware = { path = "../middleware", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "../errors/src", "../middleware/src"]

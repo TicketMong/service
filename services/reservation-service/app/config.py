@@ -1,7 +1,7 @@
 import os
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from server.observability import ObservabilityConfig, observability_config_from_env
+from observability import ObservabilityConfig, observability_config_from_env
 
 
 class Settings(BaseSettings):

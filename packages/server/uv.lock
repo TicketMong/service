@@ -151,6 +151,16 @@ wheels = [
 ]
 
 [[package]]
+name = "errors"
+version = "0.1.0"
+source = { editable = "../errors" }
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+test = [{ name = "pytest", specifier = "==9.0.2" }]
+
+[[package]]
 name = "fastapi"
 version = "0.124.0"
 source = { registry = "https://pypi.org/simple" }
@@ -341,6 +351,55 @@ wheels = [
 ]
 
 [[package]]
+name = "middleware"
+version = "0.1.0"
+source = { editable = "../middleware" }
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+test = [{ name = "pytest", specifier = "==9.0.2" }]
+
+[[package]]
+name = "observability"
+version = "0.1.0"
+source = { editable = "../observability" }
+dependencies = [
+    { name = "asgi-correlation-id" },
+    { name = "errors" },
+    { name = "fastapi" },
+    { name = "middleware" },
+    { name = "opentelemetry-exporter-otlp" },
+    { name = "opentelemetry-instrumentation-fastapi" },
+    { name = "opentelemetry-instrumentation-logging" },
+    { name = "opentelemetry-instrumentation-pymongo" },
+    { name = "opentelemetry-instrumentation-sqlalchemy" },
+    { name = "opentelemetry-sdk" },
+    { name = "structlog" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "asgi-correlation-id", specifier = "==5.0.0" },
+    { name = "errors", editable = "../errors" },
+    { name = "fastapi", specifier = "==0.124.0" },
+    { name = "middleware", editable = "../middleware" },
+    { name = "opentelemetry-exporter-otlp", specifier = "==1.42.1" },
+    { name = "opentelemetry-instrumentation-fastapi", specifier = "==0.63b1" },
+    { name = "opentelemetry-instrumentation-logging", specifier = "==0.63b1" },
+    { name = "opentelemetry-instrumentation-pymongo", specifier = "==0.63b1" },
+    { name = "opentelemetry-instrumentation-sqlalchemy", specifier = "==0.63b1" },
+    { name = "opentelemetry-sdk", specifier = "==1.42.1" },
+    { name = "structlog", specifier = "==25.5.0" },
+]
+
+[package.metadata.requires-dev]
+test = [
+    { name = "httpx", specifier = "==0.28.1" },
+    { name = "pytest", specifier = "==9.0.2" },
+]
+
+[[package]]
 name = "opentelemetry-api"
 version = "1.42.1"
 source = { registry = "https://pypi.org/simple" }
@@ -472,6 +531,36 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/d1/cf/119381b1ae446fb07921a452e3a8e1887aa87f9856225f9829958dc20063/opentelemetry_instrumentation_logging-0.63b1.tar.gz", hash = "sha256:aa57d1bcb8931186b5dde565e9c17c572cf02412572d962da5b1a17ee5637d2c", size = 19823, upload-time = "2026-05-21T16:36:37.276Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b6/71/1ba447311adf33023be14a1a309852c4cf74219f095d0055a54c1824d9ff/opentelemetry_instrumentation_logging-0.63b1-py3-none-any.whl", hash = "sha256:6b3aac8d18bc897468814d5ce4ed00f9d43588c583b4ba2288267e191b96d944", size = 15993, upload-time = "2026-05-21T16:35:35.851Z" },
+]
+
+[[package]]
+name = "opentelemetry-instrumentation-pymongo"
+version = "0.63b1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-semantic-conventions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/06/b2/94c180359165abe62e829250bc6ac6b7daa2334b3c505bad64f1c64f18ab/opentelemetry_instrumentation_pymongo-0.63b1.tar.gz", hash = "sha256:8c0ae185b59dcb45c80bf90d4ffda5fcc6337dbba11de40306ffd69459e476fa", size = 10208, upload-time = "2026-05-21T16:36:41.961Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/04/b9/47b8d0f52d81d7661debebb11f4fdd1ab869d694089711c1ac8988456364/opentelemetry_instrumentation_pymongo-0.63b1-py3-none-any.whl", hash = "sha256:0d8dd55b2522eda4a7093da8b5f47fae9a3235fb2786bc14c161d5999a66320d", size = 10290, upload-time = "2026-05-21T16:35:44.634Z" },
+]
+
+[[package]]
+name = "opentelemetry-instrumentation-sqlalchemy"
+version = "0.63b1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "packaging" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/cb/97/e5cb3ad027aebf7128faadeefe4d4cb0fc07ed32ef95e8fc9d828a077a85/opentelemetry_instrumentation_sqlalchemy-0.63b1.tar.gz", hash = "sha256:621f9eb800ea24a98b4eda968373e3909bfede0ff47f77b96f8b8a18bc2a2a1a", size = 18006, upload-time = "2026-05-21T16:36:46.855Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3c/bc/c0984c4c51da64cc2c37ce031b4fb7fab61d223f2188a6bc6b5f18035ae3/opentelemetry_instrumentation_sqlalchemy-0.63b1-py3-none-any.whl", hash = "sha256:d417414f6517963e9c1ee91ec971b94938b46904499114d035a43937bd62b6a1", size = 14410, upload-time = "2026-05-21T16:35:53.342Z" },
 ]
 
 [[package]]
@@ -699,15 +788,11 @@ name = "server"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "asgi-correlation-id" },
     { name = "fastapi" },
-    { name = "opentelemetry-exporter-otlp" },
-    { name = "opentelemetry-instrumentation-fastapi" },
-    { name = "opentelemetry-instrumentation-logging" },
-    { name = "opentelemetry-sdk" },
+    { name = "middleware" },
+    { name = "observability" },
     { name = "prometheus-client" },
     { name = "sqlalchemy" },
-    { name = "structlog" },
 ]
 
 [package.dev-dependencies]
@@ -718,15 +803,11 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "asgi-correlation-id", specifier = "==5.0.0" },
     { name = "fastapi", specifier = "==0.124.0" },
-    { name = "opentelemetry-exporter-otlp", specifier = "==1.42.1" },
-    { name = "opentelemetry-instrumentation-fastapi", specifier = "==0.63b1" },
-    { name = "opentelemetry-instrumentation-logging", specifier = "==0.63b1" },
-    { name = "opentelemetry-sdk", specifier = "==1.42.1" },
+    { name = "middleware", editable = "../middleware" },
+    { name = "observability", editable = "../observability" },
     { name = "prometheus-client", specifier = "==0.23.1" },
     { name = "sqlalchemy", specifier = ">=2.0.41,<3.0.0" },
-    { name = "structlog", specifier = "==25.5.0" },
 ]
 
 [package.metadata.requires-dev]

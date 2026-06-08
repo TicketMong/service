@@ -8,8 +8,16 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 
 COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
 
+COPY packages/errors/pyproject.toml packages/errors/pyproject.toml
+COPY packages/errors/src packages/errors/src
+COPY packages/middleware/pyproject.toml packages/middleware/pyproject.toml
+COPY packages/middleware/src packages/middleware/src
 COPY packages/server/pyproject.toml packages/server/pyproject.toml
 COPY packages/server/src packages/server/src
+COPY packages/observability/pyproject.toml packages/observability/pyproject.toml
+COPY packages/observability/src packages/observability/src
+COPY packages/kafka-utils/pyproject.toml packages/kafka-utils/pyproject.toml
+COPY packages/kafka-utils/src packages/kafka-utils/src
 COPY packages/contracts/pyproject.toml packages/contracts/pyproject.toml
 COPY packages/contracts/src packages/contracts/src
 COPY services/auth-service/requirements.txt services/auth-service/requirements.txt
@@ -30,6 +38,10 @@ RUN python -m pip install --no-cache-dir --root-user-action=ignore --upgrade pip
       "/opt/test-envs/${service}/bin/python" -m pip install --no-cache-dir --upgrade pip; \
       "/opt/test-envs/${service}/bin/python" -m pip install --no-cache-dir --root-user-action=ignore \
         ./packages/contracts \
+        ./packages/errors \
+        ./packages/kafka-utils \
+        ./packages/middleware \
+        ./packages/observability \
         ./packages/server \
         -r "services/${service}/requirements.txt" \
         -r "services/${service}/requirements-test.txt"; \

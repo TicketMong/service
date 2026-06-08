@@ -1,3 +1,6 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -40,6 +43,27 @@ def test_reservation_state_transitions_and_duplicate_conflict(db_session: Sessio
     assert canceled.status == "canceled"
 
 
+def test_create_reservation_records_manual_trace(db_session: Session) -> None:
+    trace = RecordingTraceRecorder()
+    command_service = ReservationCommandService(db_session, trace=trace)
+    request = schemas.CreateReservationRequest(
+        concertId="concert-trace",
+        showtimeId="showtime-trace",
+        performanceId="perf-trace",
+        seatId="A-1",
+    )
+
+    reservation = command_service.create_reservation("user-trace", request)
+
+    assert ("app.use_case", "reserve_seat") in trace.attributes
+    assert ("concert.id", "concert-trace") in trace.attributes
+    assert ("performance.id", "perf-trace") in trace.attributes
+    assert ("seat.id", "A-1") in trace.attributes
+    assert ("reservation.id", reservation.id) in trace.attributes
+    assert trace.events == [("seat.hold.created", {"reservation.id": reservation.id, "seat.id": "A-1"})]
+    assert trace.spans == ["reservation.reserve_seat"]
+
+
 def test_sales_state_transitions_and_policies(db_session: Session) -> None:
     """판매 상태 전이와 예약 정책 갱신 흐름을 검증한다."""
     sales_service = SalesService(db_session)
@@ -64,3 +88,25 @@ def test_query_service_returns_user_reservations(db_session: Session) -> None:
     reservations = ReservationQueryService(db_session).list_my_reservations("user-query", 20)
 
     assert len(reservations.items) == 1
+
+
+class RecordingTraceRecorder:
+    def __init__(self) -> None:
+        self.attributes: list[tuple[str, object]] = []
+        self.events: list[tuple[str, dict[str, object] | None]] = []
+        self.spans: list[str] = []
+
+    def attribute(self, key: str, value: object) -> None:
+        self.attributes.append((key, value))
+
+    def event(self, name: str, attributes: dict[str, object] | None = None) -> None:
+        self.events.append((name, attributes))
+
+    def span(self, name: str, attributes: dict[str, object] | None = None):
+        self.spans.append(name)
+
+        @contextmanager
+        def child_span() -> Iterator[None]:
+            yield
+
+        return child_span()

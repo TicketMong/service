@@ -1,6 +1,9 @@
 import asyncio
 import json
 from aiokafka import AIOKafkaConsumer
+from kafka_utils import kafka_message_attributes, start_consumer_span
+from observability import record_exception, set_current_span_attributes
+
 from app.config import settings
 from app.database import get_db
 from app.services.notification_service import handle_business_event
@@ -24,8 +27,14 @@ async def consume_events(stop_event: asyncio.Event) -> None:
     await consumer.start()
     try:
         async for message in consumer:
-            db = get_db()
-            await handle_business_event(db, message.value)
+            with start_consumer_span(message):
+                set_current_span_attributes({"event.type": str(message.value.get("eventType", "")) or None})
+                try:
+                    db = get_db()
+                    await handle_business_event(db, message.value)
+                except Exception as exc:
+                    record_exception(exc, service_name=settings.service_name, attributes=kafka_message_attributes(message))
+                    raise
             if stop_event.is_set():
                 break
     finally:

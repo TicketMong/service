@@ -7,7 +7,7 @@ from server.operational import register_operational_handlers
 from app.config import settings
 from app.consumers.kafka_consumer import consume_events
 from app.database import connect_db, close_db
-from app.observability import setup_request_logging
+from app.observability import configure_app_observability
 from app.routers import notifications
 
 
@@ -27,7 +27,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title=settings.service_name, lifespan=lifespan)
-setup_request_logging(app, settings.observability_config())
+configure_app_observability(app, settings.observability_config())
 register_operational_handlers(
     app,
     service_name=settings.service_name,

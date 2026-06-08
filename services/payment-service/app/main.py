@@ -1,48 +1,55 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from kafka_utils import build_producer_headers
+from observability import register_error_handlers
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from server.operational import register_operational_handlers, sqlalchemy_readiness_check
 
-from app import kafka, models
+from app import models
 from app.auth import UserContext, require_role, require_user_context
 from app.config import settings
 from app.database import engine, get_db
+from app.kafka import KafkaProducer, create_producer, get_kafka_producer
 from app.models import Payment, PaymentEvent
-from app.observability import setup_request_logging
+from app.observability import configure_app_observability
 from app.schemas import CreatePaymentRequest, PaymentResponse, SettlementBasisResponse
 
 
 models.Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title=settings.service_name)
-setup_request_logging(app, settings.observability_config())
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    producer = app.state.kafka_producer
+    if producer is not None:
+        await producer.start()
+    try:
+        yield
+    finally:
+        if producer is not None:
+            await producer.stop()
+
+
+app = FastAPI(title=settings.service_name, lifespan=lifespan)
+app.state.kafka_producer = create_producer()
+configure_app_observability(app, settings.observability_config())
+register_error_handlers(
+    app,
+    service_name=settings.service_name,
+    domain="payment",
+    http_error_code_for_status=lambda status_code: _error_code_for_status(status_code),
+)
 register_operational_handlers(
     app,
     service_name=settings.service_name,
     readiness_checks={"database": sqlalchemy_readiness_check(engine)},
     include_timestamp=True,
 )
-
-
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
-    return _error_response(request, exc.status_code, _error_code_for_status(exc.status_code), str(exc.detail))
-
-
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-    return _error_response(
-        request,
-        status.HTTP_422_UNPROCESSABLE_ENTITY,
-        "request.validation_failed",
-        "Request validation failed.",
-        {"errors": exc.errors()},
-    )
 
 
 @app.get("/health")
@@ -57,6 +64,7 @@ async def create_payment(
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     user: UserContext = Depends(require_user_context),
     db: Session = Depends(get_db),
+    kafka_producer: KafkaProducer = Depends(get_kafka_producer),
 ) -> PaymentResponse:
     require_role(user, {"CUSTOMER"})
 
@@ -104,8 +112,12 @@ async def create_payment(
     db.commit()
     db.refresh(payment)
     request.state.payment_event = event_name
-    if event_name is not None and event_payload is not None:
-        await kafka.publish_event(_payment_event_topic(event_name), event_payload)
+    if event_name is not None and event_payload is not None and kafka_producer is not None:
+        await kafka_producer.send_and_wait(
+            _payment_event_topic(event_name),
+            event_payload,
+            headers=build_producer_headers(correlation_id=event_payload.get("correlationId")),
+        )
     return PaymentResponse.model_validate(payment)
 
 
@@ -225,27 +237,6 @@ def _settlement_for_concert(concert_id: str, db: Session) -> SettlementBasisResp
         providerSettlementAmount=net - platform_fee,
         calculatedAt=datetime.now(UTC),
     )
-
-
-def _error_response(
-    request: Request,
-    status_code: int,
-    code: str,
-    message: str,
-    details: dict | None = None,
-) -> JSONResponse:
-    request_id = getattr(request.state, "request_id", None) or request.headers.get("X-Request-Id") or ""
-    body = {
-        "error": {
-            "code": code,
-            "message": message,
-        },
-        "requestId": request_id,
-        "occurredAt": datetime.now(UTC).isoformat(),
-    }
-    if details:
-        body["error"]["details"] = details
-    return JSONResponse(status_code=status_code, content=body)
 
 
 def _error_code_for_status(status_code: int) -> str:

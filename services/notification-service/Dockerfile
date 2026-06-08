@@ -10,10 +10,18 @@ ENV PATH="/opt/venv/bin:${PATH}"
 RUN python -m venv /opt/venv
 
 COPY packages/contracts ./packages/contracts
+COPY packages/errors ./packages/errors
+COPY packages/kafka-utils ./packages/kafka-utils
+COPY packages/middleware ./packages/middleware
+COPY packages/observability ./packages/observability
 COPY packages/server ./packages/server
 COPY services/notification-service/requirements.txt .
 RUN python -m pip install --no-cache-dir --upgrade pip \
     && python -m pip install --no-cache-dir ./packages/contracts \
+    && python -m pip install --no-cache-dir ./packages/errors \
+    && python -m pip install --no-cache-dir ./packages/kafka-utils \
+    && python -m pip install --no-cache-dir ./packages/middleware \
+    && python -m pip install --no-cache-dir ./packages/observability \
     && python -m pip install --no-cache-dir ./packages/server \
     && python -m pip install --no-cache-dir -r requirements.txt
 

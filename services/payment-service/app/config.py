@@ -1,6 +1,6 @@
 import os
 
-from server.observability import ObservabilityConfig, observability_config_from_env
+from observability import ObservabilityConfig, observability_config_from_env
 
 
 class Settings:

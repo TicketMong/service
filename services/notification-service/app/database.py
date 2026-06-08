@@ -1,4 +1,5 @@
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+from observability import instrument_motor_client
 
 from app.config import settings
 
@@ -12,6 +13,7 @@ def get_db() -> AsyncIOMotorDatabase:
 async def connect_db() -> None:
     global client
     client = AsyncIOMotorClient(settings.mongodb_url)
+    instrument_motor_client(client)
 
 
 def close_db() -> None:

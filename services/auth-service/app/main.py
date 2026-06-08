@@ -1,8 +1,7 @@
 from datetime import UTC, datetime
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request, status
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from observability import register_error_handlers
 from sqlalchemy.orm import Session
 from server.operational import register_operational_handlers, sqlalchemy_readiness_check
 
@@ -11,7 +10,7 @@ from app.audit import record_audit
 from app.config import settings
 from app.database import SessionLocal, engine, get_db
 from app.models import AuditLog, RefreshToken, RevokedToken, User
-from app.observability import setup_request_logging
+from app.observability import configure_app_observability
 from app.schemas import (
     AuditLogResponse,
     DemoAccountResponse,
@@ -30,29 +29,19 @@ with SessionLocal() as seed_db:
     seed_demo_users(seed_db)
 
 app = FastAPI(title=settings.service_name)
-setup_request_logging(app, settings.observability_config())
+configure_app_observability(app, settings.observability_config())
+register_error_handlers(
+    app,
+    service_name=settings.service_name,
+    domain="auth",
+    http_error_code_for_status=lambda status_code: _error_code_for_status(status_code),
+)
 register_operational_handlers(
     app,
     service_name=settings.service_name,
     readiness_checks={"database": sqlalchemy_readiness_check(engine)},
     include_timestamp=True,
 )
-
-
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
-    return _error_response(request, exc.status_code, _error_code_for_status(exc.status_code), str(exc.detail))
-
-
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-    return _error_response(
-        request,
-        status.HTTP_422_UNPROCESSABLE_ENTITY,
-        "request.validation_failed",
-        "Request validation failed.",
-        {"errors": exc.errors()},
-    )
 
 
 @app.get("/health")
@@ -220,27 +209,6 @@ def _is_expired(value: datetime) -> bool:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return value <= datetime.now(UTC)
-
-
-def _error_response(
-    request: Request,
-    status_code: int,
-    code: str,
-    message: str,
-    details: dict | None = None,
-) -> JSONResponse:
-    request_id = getattr(request.state, "request_id", None) or request.headers.get("X-Request-Id") or ""
-    body = {
-        "error": {
-            "code": code,
-            "message": message,
-        },
-        "requestId": request_id,
-        "occurredAt": datetime.now(UTC).isoformat(),
-    }
-    if details:
-        body["error"]["details"] = details
-    return JSONResponse(status_code=status_code, content=body)
 
 
 def _error_code_for_status(status_code: int) -> str:

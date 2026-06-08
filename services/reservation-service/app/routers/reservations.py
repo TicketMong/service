@@ -3,10 +3,12 @@ from typing import Annotated
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Request, status
+from kafka_utils import build_producer_headers
 
-from app import kafka, schemas
+from app import schemas
 from app.config import settings
 from app.dependencies import get_user_id
+from app.kafka import KafkaProducer, get_kafka_producer
 from app.routers.dependencies import reservation_command_service, reservation_query_service
 from app.services import ReservationCommandService, ReservationQueryService
 from app.services.reservations import concert_id_from_request
@@ -20,19 +22,23 @@ async def create_reservation(
     request: schemas.CreateReservationRequest,
     http_request: Request,
     reservations: Annotated[ReservationCommandService, Depends(reservation_command_service)],
+    kafka_producer: Annotated[KafkaProducer, Depends(get_kafka_producer)],
     user_id: Annotated[str, Depends(get_user_id)],
 ) -> schemas.ReservationResponse:
     response = reservations.create_reservation(user_id, request)
-    await kafka.publish_event(
-        settings.reservation_created_topic,
-        _reservation_event_payload(
-            event_name="reservation-created",
-            response=response,
-            source_id=response.id,
-            concert_id=concert_id_from_request(request),
-            http_request=http_request,
-        ),
+    payload = _reservation_event_payload(
+        event_name="reservation-created",
+        response=response,
+        source_id=response.id,
+        concert_id=concert_id_from_request(request),
+        http_request=http_request,
     )
+    if kafka_producer is not None:
+        await kafka_producer.send_and_wait(
+            settings.reservation_created_topic,
+            payload,
+            headers=build_producer_headers(correlation_id=payload.get("correlationId")),
+        )
     return response
 
 
@@ -60,18 +66,22 @@ async def expire_reservation(
     id: str,
     http_request: Request,
     reservations: Annotated[ReservationCommandService, Depends(reservation_command_service)],
+    kafka_producer: Annotated[KafkaProducer, Depends(get_kafka_producer)],
 ) -> schemas.ReservationResponse:
     response = reservations.expire_reservation(id)
-    await kafka.publish_event(
-        settings.reservation_expired_topic,
-        _reservation_event_payload(
-            event_name="reservation-expired",
-            response=response,
-            source_id=response.id,
-            concert_id=None,
-            http_request=http_request,
-        ),
+    payload = _reservation_event_payload(
+        event_name="reservation-expired",
+        response=response,
+        source_id=response.id,
+        concert_id=None,
+        http_request=http_request,
     )
+    if kafka_producer is not None:
+        await kafka_producer.send_and_wait(
+            settings.reservation_expired_topic,
+            payload,
+            headers=build_producer_headers(correlation_id=payload.get("correlationId")),
+        )
     return response
 
 

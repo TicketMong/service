@@ -1,4 +1,5 @@
 from collections.abc import Generator
+import asyncio
 
 import pytest
 from fastapi.testclient import TestClient
@@ -6,8 +7,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.consumers.kafka_consumer import consume_events
 from app.database import Base, get_db
+from app.kafka import get_kafka_producer
 from app.main import app
+import app.main as main_module
 from app.services import ticket_service
 
 
@@ -35,7 +39,9 @@ client = TestClient(app)
 def reset_db() -> Generator[None, None, None]:
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+    app.dependency_overrides[get_db] = override_get_db
     yield
+    app.dependency_overrides.pop(get_kafka_producer, None)
 
 
 # ── 단위 테스트 ────────────────────────────────────────────────
@@ -60,23 +66,18 @@ def test_duplicate_issue_returns_existing_ticket(monkeypatch: pytest.MonkeyPatch
 
 
 def test_issue_ticket_publishes_ticket_issued_event(monkeypatch: pytest.MonkeyPatch) -> None:
-    published: list[tuple[str, dict]] = []
-
-    async def fake_publish(topic: str, payload: dict) -> bool:
-        published.append((topic, payload))
-        return True
-
-    monkeypatch.setattr(ticket_service.kafka, "publish_event", fake_publish)
+    producer = FakeKafkaProducer()
+    app.dependency_overrides[get_kafka_producer] = lambda: producer
     monkeypatch.setattr(ticket_service.s3, "upload_qr", lambda *args: None)
     monkeypatch.setattr(ticket_service.s3, "upload_pdf", lambda *args: None)
 
     client.post("/tickets/issue", json=ticket_issue_request())
 
-    assert published[0][0] == "ticket-issued"
-    assert published[0][1]["eventType"] == "ticket-issued"
-    assert published[0][1]["ticketId"] == str(published[0][1]["sourceId"])
-    assert published[0][1]["concertId"] == "concert-1"
-    assert published[0][1]["seatId"] == "seat-A1"
+    assert producer.sent[0][0] == "ticket-issued"
+    assert producer.sent[0][1]["eventType"] == "ticket-issued"
+    assert producer.sent[0][1]["ticketId"] == str(producer.sent[0][1]["sourceId"])
+    assert producer.sent[0][1]["concertId"] == "concert-1"
+    assert producer.sent[0][1]["seatId"] == "seat-A1"
 
 
 def test_user_can_get_own_ticket(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -109,33 +110,110 @@ def test_user_cannot_get_other_user_ticket(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_payment_approved_event_issues_ticket(monkeypatch: pytest.MonkeyPatch) -> None:
-    import asyncio
     _mock_kafka_and_s3(monkeypatch)
 
     db = TestingSessionLocal()
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(
-        ticket_service.handle_payment_approved(db, payment_approved_event())
-    )
+    producer = FakeKafkaProducer()
+    asyncio.run(ticket_service.handle_payment_approved(db, payment_approved_event(), producer))
 
     from app.models import Ticket
     ticket = db.query(Ticket).first()
     assert ticket is not None
     assert ticket.reservation_id == "reservation-1"
+    assert dict(producer.sent[0][2])["correlation_id"] == b"corr-1"
 
 
 def test_duplicate_payment_event_does_not_create_duplicate_ticket(monkeypatch: pytest.MonkeyPatch) -> None:
-    import asyncio
     _mock_kafka_and_s3(monkeypatch)
 
     db = TestingSessionLocal()
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(ticket_service.handle_payment_approved(db, payment_approved_event()))
-    loop.run_until_complete(ticket_service.handle_payment_approved(db, payment_approved_event()))
+    producer = FakeKafkaProducer()
+    asyncio.run(ticket_service.handle_payment_approved(db, payment_approved_event(), producer))
+    asyncio.run(ticket_service.handle_payment_approved(db, payment_approved_event(), producer))
 
     from app.models import Ticket
     count = db.query(Ticket).count()
     assert count == 1
+
+
+def test_kafka_event_handlers_bind_topic_outside_consumer(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, object, object]] = []
+
+    class FakePaymentApprovedEventHandler:
+        def __init__(self, db_session_factory: object, kafka_producer: FakeKafkaProducer) -> None:
+            calls.append(("init", db_session_factory, kafka_producer))
+
+        async def __call__(self, payload: dict) -> None:
+            calls.append(("call", payload, None))
+
+    monkeypatch.setattr(main_module, "PaymentApprovedEventHandler", FakePaymentApprovedEventHandler)
+    producer = FakeKafkaProducer()
+    handlers = main_module.kafka_event_handlers(producer)
+    payload = payment_approved_event()
+    asyncio.run(handlers["payment-approved"](payload))
+
+    assert list(handlers) == ["payment-approved"]
+    assert calls == [
+        ("init", main_module.SessionLocal, producer),
+        ("call", payload, None),
+    ]
+
+
+def test_payment_approved_event_handler_owns_db_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[object, dict, FakeKafkaProducer]] = []
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    async def fake_handle_payment_approved(db: object, payload: dict, kafka_producer: FakeKafkaProducer) -> None:
+        calls.append((db, payload, kafka_producer))
+
+    session = FakeSession()
+    producer = FakeKafkaProducer()
+    payload = payment_approved_event()
+    monkeypatch.setattr(ticket_service, "handle_payment_approved", fake_handle_payment_approved)
+
+    handler = ticket_service.PaymentApprovedEventHandler(lambda: session, producer)
+    asyncio.run(handler(payload))
+
+    assert calls == [(session, payload, producer)]
+    assert session.closed is True
+
+
+def test_consume_events_uses_injected_config_and_handlers() -> None:
+    created: list[FakeConsumer] = []
+    handled: list[dict] = []
+    payload = payment_approved_event()
+
+    async def handle_event(message_payload: dict) -> None:
+        handled.append(message_payload)
+
+    def consumer_factory(*topics: str, **kwargs: object) -> FakeConsumer:
+        consumer = FakeConsumer(topics=topics, kwargs=kwargs, messages=[FakeMessage("payment-approved", payload)])
+        created.append(consumer)
+        return consumer
+
+    asyncio.run(
+        consume_events(
+            asyncio.Event(),
+            bootstrap_servers="kafka:9092",
+            group_id="ticket-service",
+            service_name="ticket-service",
+            handlers={"payment-approved": handle_event},
+            consumer_factory=consumer_factory,
+        )
+    )
+
+    assert created[0].topics == ("payment-approved",)
+    assert created[0].kwargs["bootstrap_servers"] == "kafka:9092"
+    assert created[0].kwargs["group_id"] == "ticket-service"
+    assert created[0].started is True
+    assert created[0].stopped is True
+    assert handled == [payload]
 
 
 def test_healthz() -> None:
@@ -197,9 +275,46 @@ def user_headers(user_id: int | str) -> dict[str, str]:
 
 
 def _mock_kafka_and_s3(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_publish(topic: str, payload: dict) -> bool:
-        return True
-
-    monkeypatch.setattr(ticket_service.kafka, "publish_event", fake_publish)
+    app.dependency_overrides[get_kafka_producer] = lambda: FakeKafkaProducer()
     monkeypatch.setattr(ticket_service.s3, "upload_qr", lambda *args: None)
     monkeypatch.setattr(ticket_service.s3, "upload_pdf", lambda *args: None)
+
+
+class FakeKafkaProducer:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, dict, list[tuple[str, bytes]]]] = []
+
+    async def send_and_wait(self, topic: str, payload: dict, *, headers: list[tuple[str, bytes]]) -> None:
+        self.sent.append((topic, payload, headers))
+
+
+class FakeMessage:
+    def __init__(self, topic: str, value: dict) -> None:
+        self.topic = topic
+        self.value = value
+        self.headers: list[tuple[str, bytes]] = []
+        self.partition = 0
+        self.offset = 0
+
+
+class FakeConsumer:
+    def __init__(self, *, topics: tuple[str, ...], kwargs: dict[str, object], messages: list[FakeMessage]) -> None:
+        self.topics = topics
+        self.kwargs = kwargs
+        self.messages = messages
+        self.started = False
+        self.stopped = False
+
+    async def start(self) -> None:
+        self.started = True
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+    def __aiter__(self) -> "FakeConsumer":
+        return self
+
+    async def __anext__(self) -> FakeMessage:
+        if not self.messages:
+            raise StopAsyncIteration
+        return self.messages.pop(0)

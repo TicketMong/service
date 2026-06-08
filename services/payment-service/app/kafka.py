@@ -1,28 +1,19 @@
-import json
-import logging
-
 from aiokafka import AIOKafkaProducer
+from fastapi import Request
+from kafka_utils import create_kafka_producer
 
 from app.config import settings
 
 
-logger = logging.getLogger("app.kafka")
+KafkaProducer = AIOKafkaProducer | None
 
 
-async def publish_event(topic: str, payload: dict) -> bool:
-    if not settings.kafka_bootstrap_servers:
-        return False
-
-    producer = AIOKafkaProducer(
-        bootstrap_servers=settings.kafka_bootstrap_servers,
-        value_serializer=lambda value: json.dumps(value, separators=(",", ":")).encode("utf-8"),
+def create_producer() -> KafkaProducer:
+    return create_kafka_producer(
+        settings.kafka_bootstrap_servers,
+        client_id=settings.service_name,
     )
-    await producer.start()
-    try:
-        await producer.send_and_wait(topic, payload)
-        return True
-    except Exception:
-        logger.exception("failed_to_publish_event topic=%s event_id=%s", topic, payload.get("eventId"))
-        raise
-    finally:
-        await producer.stop()
+
+
+def get_kafka_producer(request: Request) -> KafkaProducer:
+    return request.app.state.kafka_producer
