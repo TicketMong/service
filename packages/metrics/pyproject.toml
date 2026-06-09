@@ -1,0 +1,20 @@
+[project]
+name = "metrics"
+version = "0.1.0"
+description = "Shared metrics label schema for services"
+requires-python = ">=3.12"
+dependencies = [
+    "prometheus-client==0.23.1",
+]
+
+[dependency-groups]
+test = [
+    "pytest==9.0.2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

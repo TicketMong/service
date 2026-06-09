@@ -235,11 +235,13 @@ def test_metrics_returns_prometheus_format() -> None:
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain; version=0.0.4")
-    assert "http_requests_total" in response.text
-    assert 'service="ticket-service"' in response.text
-    assert 'method="GET"' in response.text
-    assert 'path="/healthz"' in response.text
-    assert 'status="200"' in response.text
+    assert "http_server_request_duration_seconds" in response.text
+    assert "http_server_active_requests" in response.text
+    assert "service_ready" in response.text
+    assert 'service_name="ticket-service"' in response.text
+    assert 'http_request_method="GET"' in response.text
+    assert 'http_route="/healthz"' in response.text
+    assert 'http_response_status_code="200"' in response.text
 
 
 # ── 헬퍼 ──────────────────────────────────────────────────────

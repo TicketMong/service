@@ -15,6 +15,7 @@ COPY services/ticket-service/pyproject.toml services/ticket-service/uv.lock ./se
 COPY packages/contracts ./packages/contracts
 COPY packages/errors ./packages/errors
 COPY packages/kafka-utils ./packages/kafka-utils
+COPY packages/metrics ./packages/metrics
 COPY packages/middleware ./packages/middleware
 COPY packages/observability ./packages/observability
 COPY packages/server ./packages/server

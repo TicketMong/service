@@ -13,6 +13,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
 
 COPY services/auth-service/pyproject.toml services/auth-service/uv.lock ./services/auth-service/
 COPY packages/middleware ./packages/middleware
+COPY packages/metrics ./packages/metrics
 COPY packages/observability ./packages/observability
 COPY packages/server ./packages/server
 COPY packages/errors ./packages/errors

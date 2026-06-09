@@ -71,8 +71,63 @@ def test_metrics_returns_prometheus_text_and_http_metrics() -> None:
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain; version=0.0.4")
-    assert "http_requests_total" in response.text
-    assert 'path="/healthz"' in response.text
+    assert "http_server_request_duration_seconds" in response.text
+    assert "http_server_active_requests" in response.text
+    assert "service_ready" in response.text
+    assert 'http_route="/healthz"' in response.text
+    assert 'http_request_method="GET"' in response.text
+    assert 'http_response_status_code="200"' in response.text
+    assert 'service_name="test-service"' in response.text
+    assert 'service_version="unknown"' in response.text
+    assert 'service_environment="local"' in response.text
+
+
+def test_http_metrics_use_route_template_not_raw_path() -> None:
+    app = FastAPI()
+
+    @app.get("/orders/{order_id}")
+    def read_order(order_id: str) -> dict[str, str]:
+        return {"order_id": order_id}
+
+    register_operational_handlers(
+        app,
+        service_name="test-service",
+        readiness_checks={},
+        service_version="2026.06.09.1",
+        service_environment="aws-dev",
+    )
+    client = TestClient(app)
+    client.get("/orders/ord-123")
+
+    response = client.get("/metrics")
+
+    assert 'http_route="/orders/{order_id}"' in response.text
+    assert "/orders/ord-123" not in response.text
+    assert 'service_version="2026.06.09.1"' in response.text
+    assert 'service_environment="aws-dev"' in response.text
+
+
+def test_http_metrics_do_not_expose_high_cardinality_labels() -> None:
+    app = FastAPI()
+    register_operational_handlers(app, service_name="test-service", readiness_checks={})
+    client = TestClient(app)
+    client.get("/healthz", headers={"X-Request-Id": "req-123"})
+
+    response = client.get("/metrics")
+
+    forbidden_labels = (
+        "request_id",
+        "trace_id",
+        "span_id",
+        "correlation_id",
+        "user_id",
+        "payment_id",
+        "reservation_id",
+        "ticket_id",
+        "path",
+    )
+    for label in forbidden_labels:
+        assert f"{label}=" not in response.text
 
 
 def test_metrics_configurator_can_register_service_specific_metrics() -> None:

@@ -14,6 +14,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
 COPY services/payment-service/pyproject.toml services/payment-service/uv.lock ./services/payment-service/
 COPY packages/errors ./packages/errors
 COPY packages/kafka-utils ./packages/kafka-utils
+COPY packages/metrics ./packages/metrics
 COPY packages/middleware ./packages/middleware
 COPY packages/observability ./packages/observability
 COPY packages/server ./packages/server

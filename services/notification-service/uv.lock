@@ -474,6 +474,20 @@ requires-dist = [
 test = [{ name = "pytest", specifier = "==9.0.2" }]
 
 [[package]]
+name = "metrics"
+version = "0.1.0"
+source = { editable = "../../packages/metrics" }
+dependencies = [
+    { name = "prometheus-client" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "prometheus-client", specifier = "==0.23.1" }]
+
+[package.metadata.requires-dev]
+test = [{ name = "pytest", specifier = "==9.0.2" }]
+
+[[package]]
 name = "middleware"
 version = "0.1.0"
 source = { editable = "../../packages/middleware" }
@@ -1119,6 +1133,7 @@ version = "0.1.0"
 source = { editable = "../../packages/server" }
 dependencies = [
     { name = "fastapi" },
+    { name = "metrics" },
     { name = "middleware" },
     { name = "observability" },
     { name = "prometheus-client" },
@@ -1128,6 +1143,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = "==0.124.0" },
+    { name = "metrics", editable = "../../packages/metrics" },
     { name = "middleware", editable = "../../packages/middleware" },
     { name = "observability", editable = "../../packages/observability" },
     { name = "prometheus-client", specifier = "==0.23.1" },

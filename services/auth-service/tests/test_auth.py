@@ -92,11 +92,13 @@ def test_operational_endpoints() -> None:
     metrics_response = client.get("/metrics")
     assert metrics_response.status_code == 200
     assert metrics_response.headers["content-type"].startswith("text/plain; version=0.0.4")
-    assert "http_requests_total" in metrics_response.text
-    assert 'service="auth-service"' in metrics_response.text
-    assert 'method="GET"' in metrics_response.text
-    assert 'path="/healthz"' in metrics_response.text
-    assert 'status="200"' in metrics_response.text
+    assert "http_server_request_duration_seconds" in metrics_response.text
+    assert "http_server_active_requests" in metrics_response.text
+    assert "service_ready" in metrics_response.text
+    assert 'service_name="auth-service"' in metrics_response.text
+    assert 'http_request_method="GET"' in metrics_response.text
+    assert 'http_route="/healthz"' in metrics_response.text
+    assert 'http_response_status_code="200"' in metrics_response.text
 
 
 def test_error_response_uses_common_shape() -> None:

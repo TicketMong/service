@@ -31,6 +31,7 @@ package = false
 errors = { path = "../../packages/errors", editable = true }
 middleware = { path = "../../packages/middleware", editable = true }
 kafka-utils = { path = "../../packages/kafka-utils", editable = true }
+metrics = { path = "../../packages/metrics", editable = true }
 observability = { path = "../../packages/observability", editable = true }
 server = { path = "../../packages/server", editable = true }
 

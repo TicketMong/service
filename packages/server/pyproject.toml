@@ -5,6 +5,7 @@ description = "Shared FastAPI server utilities for services"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi==0.124.0",
+    "metrics",
     "middleware",
     "observability",
     "prometheus-client==0.23.1",
@@ -19,6 +20,7 @@ test = [
 
 [tool.uv.sources]
 errors = { path = "../errors", editable = true }
+metrics = { path = "../metrics", editable = true }
 middleware = { path = "../middleware", editable = true }
 observability = { path = "../observability", editable = true }
 
@@ -27,4 +29,4 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
-pythonpath = ["src", "../errors/src", "../middleware/src", "../observability/src"]
+pythonpath = ["src", "../errors/src", "../metrics/src", "../middleware/src", "../observability/src"]

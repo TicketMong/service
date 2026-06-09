@@ -15,6 +15,7 @@ COPY services/notification-service/pyproject.toml services/notification-service/
 COPY packages/contracts ./packages/contracts
 COPY packages/errors ./packages/errors
 COPY packages/kafka-utils ./packages/kafka-utils
+COPY packages/metrics ./packages/metrics
 COPY packages/middleware ./packages/middleware
 COPY packages/observability ./packages/observability
 COPY packages/server ./packages/server

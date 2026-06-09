@@ -18,6 +18,8 @@ COPY packages/observability/pyproject.toml packages/observability/pyproject.toml
 COPY packages/observability/src packages/observability/src
 COPY packages/kafka-utils/pyproject.toml packages/kafka-utils/pyproject.toml
 COPY packages/kafka-utils/src packages/kafka-utils/src
+COPY packages/metrics/pyproject.toml packages/metrics/pyproject.toml
+COPY packages/metrics/src packages/metrics/src
 COPY packages/contracts/pyproject.toml packages/contracts/pyproject.toml
 COPY packages/contracts/src packages/contracts/src
 COPY services/auth-service/requirements.txt services/auth-service/requirements.txt
@@ -40,6 +42,7 @@ RUN python -m pip install --no-cache-dir --root-user-action=ignore --upgrade pip
         ./packages/contracts \
         ./packages/errors \
         ./packages/kafka-utils \
+        ./packages/metrics \
         ./packages/middleware \
         ./packages/observability \
         ./packages/server \
