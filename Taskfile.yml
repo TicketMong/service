@@ -4,6 +4,7 @@ vars:
   UV: '{{default "uv" .UV}}'
   UV_PYTHON: '{{default "python3.13" .UV_PYTHON}}'
   DEV_VENV_DIR: '{{default ".venv" .DEV_VENV_DIR}}'
+  DEV_OVERRIDES: '{{default "requirements-dev-overrides.txt" .DEV_OVERRIDES}}'
   IMAGE_REGISTRY: '{{default "10.10.10.10:5000" .IMAGE_REGISTRY}}'
   IMAGE_NAMESPACE: '{{default "" .IMAGE_NAMESPACE}}'
   IMAGE_TAG: '{{default "latest" .IMAGE_TAG}}'
@@ -15,6 +16,7 @@ vars:
   DOCKER_BUILD_CACHE_TO: '{{default "" .DOCKER_BUILD_CACHE_TO}}'
   APP_SERVICES: auth-service concert-service notification-service payment-service reservation-service ticket-service
   APP_IMAGE_SERVICES: auth-service concert-service reservation-service payment-service ticket-service notification-service
+  DEV_SERVICE_PYPROJECTS: services/auth-service/pyproject.toml services/concert-service/pyproject.toml services/reservation-service/pyproject.toml services/payment-service/pyproject.toml services/ticket-service/pyproject.toml services/notification-service/pyproject.toml
   DASHBOARD_SERVICE: '{{default "dashboard" .DASHBOARD_SERVICE}}'
 
 includes:
@@ -46,11 +48,21 @@ tasks:
         uv_cmd='{{.UV}}'
         python_spec='{{.UV_PYTHON}}'
         venv_dir='{{.DEV_VENV_DIR}}'
+        overrides='{{.DEV_OVERRIDES}}'
         if ! command -v "${uv_cmd}" >/dev/null 2>&1; then
           printf '%s\n' "${uv_cmd} command not found. Install uv or set UV=/path/to/uv." >&2
           exit 1
         fi
-        UV_PROJECT_ENVIRONMENT="${venv_dir}" "${uv_cmd}" sync --frozen --group test --python "${python_spec}"
+        "${uv_cmd}" venv --python "${python_spec}" "${venv_dir}" --allow-existing
+        venv_python="${venv_dir}/bin/python"
+        if [ ! -x "${venv_python}" ]; then
+          venv_python="${venv_dir}/Scripts/python.exe"
+        fi
+        install_args=""
+        for project in {{.DEV_SERVICE_PYPROJECTS}}; do
+          install_args="${install_args} -r ${project} --group ${project}:test"
+        done
+        "${uv_cmd}" pip install --python "${venv_python}" --exact --strict --overrides "${overrides}" ${install_args}
         printf 'Unified uv development environment is ready at %s.\n' "${venv_dir}"
 
   test-runner-build:

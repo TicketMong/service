@@ -1,0 +1,7 @@
+# Unified local development venv policy.
+#
+# Service containers still use each service uv.lock. This file only resolves
+# exact-version conflicts when all service pyproject files are installed into
+# one VS Code-friendly environment.
+psycopg[binary]==3.3.2
+sqlalchemy==2.0.45

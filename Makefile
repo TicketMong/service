@@ -5,6 +5,7 @@ SHELL := /bin/bash
 UV ?= uv
 UV_PYTHON ?= python3.13
 DEV_VENV_DIR ?= .venv
+DEV_OVERRIDES ?= requirements-dev-overrides.txt
 
 TEST_RUNNER_IMAGE ?= ticketing-python-test-runner:local
 PYTEST_ARGS ?= -q -s -p no:cacheprovider
@@ -53,6 +54,9 @@ APP_IMAGE_SERVICES := \
 	notification-service
 
 SERVICE_DIRS := $(addprefix services/,$(APP_SERVICES))
+DEV_SERVICE_PYPROJECTS := $(addsuffix /pyproject.toml,$(SERVICE_DIRS))
+DEV_REQUIREMENT_ARGS := $(addprefix -r ,$(DEV_SERVICE_PYPROJECTS))
+DEV_GROUP_ARGS := $(foreach project,$(DEV_SERVICE_PYPROJECTS),--group $(project):test)
 .PHONY: help list install test-runner-build test-unit test test-all test-e2e e2e-scenario e2e-up e2e-wait e2e-newman e2e-down app-images-build app-images-push dev-images-build dev-images-push
 
 help:
@@ -90,7 +94,8 @@ install:
 		printf '%s\n' '$(UV) command not found. Install uv or set UV=/path/to/uv.' >&2; \
 		exit 1; \
 	fi; \
-	UV_PROJECT_ENVIRONMENT="$(DEV_VENV_DIR)" $(UV) sync --frozen --group test --python "$(UV_PYTHON)"; \
+	$(UV) venv --python "$(UV_PYTHON)" "$(DEV_VENV_DIR)" --allow-existing; \
+	$(UV) pip install --python "$(DEV_VENV_DIR)/bin/python" --exact --strict --overrides "$(DEV_OVERRIDES)" $(DEV_REQUIREMENT_ARGS) $(DEV_GROUP_ARGS); \
 	printf '%s\n' 'Unified uv development environment is ready at $(DEV_VENV_DIR).'
 
 test-runner-build:
