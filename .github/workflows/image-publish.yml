@@ -271,3 +271,12 @@ jobs:
           git add values/services/
           git commit -m "chore: update image tags to ${GITHUB_SHA}"
           git push
+      - name: Discord 배포 알림
+        if: always()
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          status: ${{ job.status }}
+          title: "이미지 배포 완료"
+          description: "커밋: ${{ github.sha }}"
+          color: 0x00ff00
