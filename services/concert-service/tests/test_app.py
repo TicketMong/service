@@ -86,6 +86,9 @@ def test_metrics_returns_prometheus_text() -> None:
     assert 'http_request_method="GET"' in response.text
     assert 'http_route="/healthz"' in response.text
     assert 'http_response_status_code="200"' in response.text
+    assert "catalog_queries_total" in response.text
+    assert "concert_admin_commands_total" in response.text
+    assert "seat_inventory_commands_total" in response.text
 
 
 def test_settings_defaults(monkeypatch: MonkeyPatch) -> None:

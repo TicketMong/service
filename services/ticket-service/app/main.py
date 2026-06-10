@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from prometheus_client import CollectorRegistry
 from server.operational import register_operational_handlers
 
 from app import models
@@ -10,6 +11,7 @@ from app.config import settings
 from app.consumers.kafka_consumer import EventHandlers, consume_events
 from app.database import SessionLocal, engine
 from app.kafka import KafkaProducer, create_producer
+from app.metrics import configure_ticket_metrics
 from app.observability import configure_app_observability
 from app.routers import tickets
 from app.services.ticket_service import PaymentApprovedEventHandler
@@ -19,6 +21,15 @@ models.Base.metadata.create_all(bind=engine)
 
 def kafka_event_handlers(kafka_producer: KafkaProducer) -> EventHandlers:
     return {settings.payment_approved_topic: PaymentApprovedEventHandler(SessionLocal, kafka_producer)}
+
+
+def _configure_ticket_service_metrics(registry: CollectorRegistry, *, service_environment: str) -> None:
+    """ticket-service 전용 Prometheus metric을 운영 registry에 등록한다."""
+    configure_ticket_metrics(
+        registry,
+        service_name=settings.service_name,
+        service_environment=service_environment,
+    )
 
 
 @asynccontextmanager
@@ -62,6 +73,10 @@ register_operational_handlers(
     readiness_success_status="ok",
     readiness_failure_status="failed",
     include_readiness_checks=False,
+    configure_metrics=lambda registry: _configure_ticket_service_metrics(
+        registry,
+        service_environment=observability_config.service_environment,
+    ),
 )
 app.include_router(tickets.router)
 

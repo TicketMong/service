@@ -91,6 +91,65 @@ def test_metrics_returns_prometheus_text_and_http_metrics() -> None:
     assert 'service_environment="test"' in response.text
 
 
+def test_debug_status_route_is_registered_in_dev_environment() -> None:
+    app = FastAPI()
+    register_test_operational_handlers(app, readiness_checks={})
+    client = TestClient(app)
+
+    response = client.get("/__debug/status/500")
+
+    assert response.status_code == 500
+
+
+def test_debug_status_route_returns_requested_status_and_metrics() -> None:
+    app = FastAPI()
+    register_test_operational_handlers(app, readiness_checks={})
+    client = TestClient(app)
+
+    response = client.get("/__debug/status/500?reason=grafana-smoke")
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "status": "debug",
+        "statusCode": 500,
+        "reason": "grafana-smoke",
+    }
+
+    metrics = client.get("/metrics").text
+    assert 'http_route="/__debug/status/{status_code}"' in metrics
+    assert 'http_response_status_code="500"' in metrics
+
+
+def test_debug_status_route_supports_service_prefixed_path_for_kong() -> None:
+    app = FastAPI()
+    register_test_operational_handlers(app, readiness_checks={})
+    client = TestClient(app)
+
+    response = client.get("/__debug/test/status/502")
+
+    assert response.status_code == 502
+
+    metrics = client.get("/metrics").text
+    assert 'http_route="/__debug/test/status/{status_code}"' in metrics
+    assert 'http_response_status_code="502"' in metrics
+
+
+def test_debug_status_route_remains_disabled_in_prod() -> None:
+    app = FastAPI()
+    register_operational_handlers(
+        app,
+        service_name="test-service",
+        service_version="test-version",
+        service_environment="prod",
+        readiness_checks={},
+    )
+    client = TestClient(app)
+
+    response = client.get("/__debug/status/500")
+
+    assert response.status_code == 404
+
+
 def test_http_metrics_use_route_template_not_raw_path() -> None:
     app = FastAPI()
 

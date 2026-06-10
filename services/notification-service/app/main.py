@@ -2,13 +2,24 @@ import asyncio
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 from fastapi import FastAPI
+from prometheus_client import CollectorRegistry
 from server.operational import register_operational_handlers
 
 from app.config import settings
 from app.consumers.kafka_consumer import consume_events
 from app.database import connect_db, close_db
+from app.metrics import configure_notification_metrics
 from app.observability import configure_app_observability
 from app.routers import notifications
+
+
+def _configure_notification_service_metrics(registry: CollectorRegistry, *, service_environment: str) -> None:
+    """notification-service 전용 Prometheus metric을 운영 registry에 등록한다."""
+    configure_notification_metrics(
+        registry,
+        service_name=settings.service_name,
+        service_environment=service_environment,
+    )
 
 
 @asynccontextmanager
@@ -38,6 +49,10 @@ register_operational_handlers(
     readiness_success_status="ok",
     readiness_failure_status="failed",
     include_readiness_checks=False,
+    configure_metrics=lambda registry: _configure_notification_service_metrics(
+        registry,
+        service_environment=observability_config.service_environment,
+    ),
 )
 app.include_router(notifications.router)
 

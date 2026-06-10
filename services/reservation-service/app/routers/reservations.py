@@ -2,13 +2,18 @@ from datetime import UTC, datetime
 from typing import Annotated
 from uuid import uuid4
 
+from aiokafka.errors import KafkaError
 from fastapi import APIRouter, Depends, Request, status
 from kafka_utils import build_producer_headers
+from metrics import MetricResult
 
 from app import schemas
 from app.config import settings
 from app.dependencies import get_user_id
 from app.kafka import KafkaProducer, get_kafka_producer
+from app.metrics import ReservationEventType
+from app.metrics.events import ReservationEventPublishRecorded
+from app.metrics.recorder import ReservationTelemetryRecorder
 from app.routers.dependencies import reservation_command_service, reservation_query_service
 from app.services import ReservationCommandService, ReservationQueryService
 from app.services.reservations import concert_id_from_request
@@ -34,10 +39,20 @@ async def create_reservation(
         http_request=http_request,
     )
     if kafka_producer is not None:
-        await kafka_producer.send_and_wait(
-            settings.reservation_created_topic,
-            payload,
-            headers=build_producer_headers(correlation_id=payload.get("correlationId")),
+        telemetry = ReservationTelemetryRecorder()
+        try:
+            await kafka_producer.send_and_wait(
+                settings.reservation_created_topic,
+                payload,
+                headers=build_producer_headers(correlation_id=payload.get("correlationId")),
+            )
+        except (KafkaError, RuntimeError):
+            telemetry.record(
+                ReservationEventPublishRecorded(event_type=ReservationEventType.CREATED, result=MetricResult.FAILURE)
+            )
+            raise
+        telemetry.record(
+            ReservationEventPublishRecorded(event_type=ReservationEventType.CREATED, result=MetricResult.SUCCESS)
         )
     return response
 
@@ -77,10 +92,20 @@ async def expire_reservation(
         http_request=http_request,
     )
     if kafka_producer is not None:
-        await kafka_producer.send_and_wait(
-            settings.reservation_expired_topic,
-            payload,
-            headers=build_producer_headers(correlation_id=payload.get("correlationId")),
+        telemetry = ReservationTelemetryRecorder()
+        try:
+            await kafka_producer.send_and_wait(
+                settings.reservation_expired_topic,
+                payload,
+                headers=build_producer_headers(correlation_id=payload.get("correlationId")),
+            )
+        except (KafkaError, RuntimeError):
+            telemetry.record(
+                ReservationEventPublishRecorded(event_type=ReservationEventType.EXPIRED, result=MetricResult.FAILURE)
+            )
+            raise
+        telemetry.record(
+            ReservationEventPublishRecorded(event_type=ReservationEventType.EXPIRED, result=MetricResult.SUCCESS)
         )
     return response
 

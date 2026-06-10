@@ -2,7 +2,7 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from time import perf_counter
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Path, Query, Request, status
 from fastapi.responses import JSONResponse, Response
 from metrics import (
     ServiceIdentity,
@@ -26,6 +26,7 @@ from starlette.routing import Match
 ReadinessCheck = Callable[[], str]
 MetricsConfigurator = Callable[[CollectorRegistry], None]
 PROMETHEUS_TEXT_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
+DEBUG_STATUS_ROUTE_DEV_ENVIRONMENTS = frozenset({"local", "dev", "test"})
 
 
 def register_operational_handlers(
@@ -130,7 +131,42 @@ def register_operational_handlers(
     def metrics() -> Response:
         return Response(content=generate_latest(metrics_registry), media_type=PROMETHEUS_TEXT_CONTENT_TYPE)
 
+    register_debug_status_route(app, service_name=service_name, service_environment=service_environment)
+
     return metrics_registry
+
+
+def register_debug_status_route(
+    app: FastAPI,
+    *,
+    service_environment: str,
+    service_name: str | None = None,
+    enabled: bool | None = None,
+) -> None:
+    if enabled is None:
+        enabled = True
+    if not enabled or not _is_debug_status_route_environment(service_environment):
+        return
+
+    service_key = _debug_service_key(service_name)
+
+    @app.get("/__debug/status/{status_code}", include_in_schema=False)
+    @app.get(f"/__debug/{service_key}/status/{{status_code}}", include_in_schema=False)
+    def debug_status(
+        status_code: int = Path(..., ge=100, le=599),
+        reason: str | None = Query(default=None),
+    ) -> Response:
+        if status_code < 200 or status_code in {204, 304}:
+            return Response(status_code=status_code)
+
+        return JSONResponse(
+            status_code=status_code,
+            content={
+                "status": "debug",
+                "statusCode": status_code,
+                "reason": reason or "forced debug response",
+            },
+        )
 
 
 def configure_runtime_collectors(registry: CollectorRegistry) -> None:
@@ -176,6 +212,17 @@ def _route_template(request: Request) -> str:
         if match is Match.PARTIAL:
             return str(getattr(route, "path", "unmatched"))
     return "unmatched"
+
+
+def _is_debug_status_route_environment(service_environment: str) -> bool:
+    normalized = service_environment.strip().lower()
+    return normalized in DEBUG_STATUS_ROUTE_DEV_ENVIRONMENTS
+
+
+def _debug_service_key(service_name: str | None) -> str:
+    if service_name is None:
+        return "service"
+    return service_name.removesuffix("-service")
 
 
 def _run_readiness_checks(readiness_checks: Mapping[str, ReadinessCheck]) -> dict[str, str]:

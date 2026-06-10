@@ -5,11 +5,12 @@ from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from app.dependencies import get_db
+from app.metrics.recorder import ReservationTelemetryRecorder
 from app.services import ReservationCommandService, ReservationPolicyService, ReservationQueryService, SalesService
 
 
 def reservation_command_service(db: Annotated[Session, Depends(get_db)]) -> ReservationCommandService:
-    return ReservationCommandService(db)
+    return ReservationCommandService(db, telemetry=ReservationTelemetryRecorder())
 
 
 def reservation_query_service(db: Annotated[Session, Depends(get_db)]) -> ReservationQueryService:
@@ -17,7 +18,7 @@ def reservation_query_service(db: Annotated[Session, Depends(get_db)]) -> Reserv
 
 
 def sales_service(db: Annotated[Session, Depends(get_db)]) -> SalesService:
-    return SalesService(db)
+    return SalesService(db, telemetry=ReservationTelemetryRecorder())
 
 
 def policy_service(db: Annotated[Session, Depends(get_db)]) -> ReservationPolicyService:

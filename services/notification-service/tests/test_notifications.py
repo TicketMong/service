@@ -170,6 +170,21 @@ def test_duplicate_event_id_returns_existing_notification() -> None:
 
     assert second["id"] == first["id"]
     assert count == 1  # 중복 처리 없음
+    metrics = client.get("/metrics").text
+    assert_metric_labels(metrics, "notifications_created_total", event_type="reservation-created", result="success")
+    assert_metric_labels(metrics, "notifications_created_total", event_type="reservation-created", result="duplicate")
+    assert_metric_labels(metrics, "notification_events_consumed_total", event_type="reservation-created", result="duplicate", topic="reservation-created")
+
+
+def test_invalid_business_event_records_failure_metric() -> None:
+    import asyncio
+
+    db = database.client["notification_db"]
+    with pytest.raises(Exception):
+        asyncio.get_event_loop().run_until_complete(handle_business_event(db, {"eventType": "payment-approved"}))
+
+    metrics = client.get("/metrics").text
+    assert_metric_labels(metrics, "notification_events_consumed_total", event_type="payment-approved", result="failure", topic="payment-approved")
 
 
 def test_user_can_list_only_own_notifications() -> None:
@@ -178,6 +193,8 @@ def test_user_can_list_only_own_notifications() -> None:
 
     assert response.status_code == 200
     assert all(item["userId"] == "1" for item in response.json())
+    metrics = client.get("/metrics").text
+    assert_metric_labels(metrics, "notification_reads_total", result="success", route_kind="list")
 
 
 def test_user_cannot_read_other_user_notification() -> None:
@@ -192,6 +209,8 @@ def test_user_cannot_read_other_user_notification() -> None:
 
     response = client.get(f"/notifications/{other_id}", headers=user_headers(1))
     assert response.status_code == 403
+    metrics = client.get("/metrics").text
+    assert_metric_labels(metrics, "notification_reads_total", result="rejection", route_kind="detail")
 
 
 def test_healthz() -> None:
@@ -234,3 +253,8 @@ def _seed_notifications() -> None:
     loop.run_until_complete(
         handle_business_event(db, payment_approved_event(user_id="2", source_id="payment-2"))
     )
+
+
+def assert_metric_labels(metrics: str, metric_name: str, **labels: str) -> None:
+    label_fragments = [f'{key}="{value}"' for key, value in {"service_name": "notification-service", **labels}.items()]
+    assert any(line.startswith(metric_name + "{") and all(fragment in line for fragment in label_fragments) for line in metrics.splitlines())

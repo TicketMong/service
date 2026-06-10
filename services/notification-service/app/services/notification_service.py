@@ -7,11 +7,18 @@ from contracts.events import (
     TICKET_ISSUED_TOPIC,
 )
 from fastapi import HTTPException, status
+from metrics import MetricResult
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.auth import UserContext
+from app.metrics.events import NotificationReadRecorded
+from app.metrics.labels import NotificationRouteKind
+from app.metrics.recorder import NotificationTelemetryRecorder
 from app.models import notification_to_doc, processed_event_to_doc
 from app.schemas import BusinessEvent
+
+
+notification_metrics = NotificationTelemetryRecorder()
 
 
 def _serialize(doc: dict) -> dict:
@@ -25,54 +32,81 @@ def _serialize(doc: dict) -> dict:
 async def list_notifications(
     db: AsyncIOMotorDatabase, user: UserContext
 ) -> list[dict]:
-    query = {"user_id": user.user_id}
-    cursor = db["notifications"].find(query).sort("_id", -1)
-    return [_serialize(doc) async for doc in cursor]
+    """알림 목록 조회 결과를 route_kind 단위 metric으로 남긴다."""
+    try:
+        query = {"user_id": user.user_id}
+        cursor = db["notifications"].find(query).sort("_id", -1)
+        items = [_serialize(doc) async for doc in cursor]
+    except Exception:
+        notification_metrics.record(
+            NotificationReadRecorded(route_kind=NotificationRouteKind.LIST, result=MetricResult.FAILURE)
+        )
+        raise
+    notification_metrics.record(
+        NotificationReadRecorded(route_kind=NotificationRouteKind.LIST, result=MetricResult.SUCCESS)
+    )
+    return items
 
 
 async def get_notification(
     db: AsyncIOMotorDatabase, notification_id: str, user: UserContext
 ) -> dict:
-    doc = await db["notifications"].find_one({"_id": ObjectId(notification_id)})
-    if doc is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Notification not found"
+    """알림 상세 조회 결과를 route_kind 단위 metric으로 남긴다."""
+    try:
+        doc = await db["notifications"].find_one({"_id": ObjectId(notification_id)})
+        if doc is None:
+            notification_metrics.record(
+                NotificationReadRecorded(route_kind=NotificationRouteKind.DETAIL, result=MetricResult.REJECTION)
+            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found")
+        if doc["user_id"] != user.user_id:
+            notification_metrics.record(
+                NotificationReadRecorded(route_kind=NotificationRouteKind.DETAIL, result=MetricResult.REJECTION)
+            )
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
+        result = _serialize(doc)
+    except HTTPException:
+        raise
+    except Exception:
+        notification_metrics.record(
+            NotificationReadRecorded(route_kind=NotificationRouteKind.DETAIL, result=MetricResult.FAILURE)
         )
-    if doc["user_id"] != user.user_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not allowed"
-        )
-    return _serialize(doc)
+        raise
+    notification_metrics.record(
+        NotificationReadRecorded(route_kind=NotificationRouteKind.DETAIL, result=MetricResult.SUCCESS)
+    )
+    return result
 
 
 async def handle_business_event(db: AsyncIOMotorDatabase, payload: dict) -> dict:
-    event = BusinessEvent.model_validate(payload)
+    """비즈니스 이벤트 소비와 알림 생성 결과를 metric으로 남긴다."""
+    event_type = str(payload.get("eventType", ""))
+    attempt = notification_metrics.start_event(topic=event_type, event_type=event_type)
+    try:
+        event = BusinessEvent.model_validate(payload)
 
-    # idempotency: 이미 처리된 이벤트는 중복 처리하지 않음
-    processed = await db["processed_events"].find_one({"event_id": event.eventId})
-    if processed:
-        doc = await db["notifications"].find_one(
-            {"_id": ObjectId(processed["notification_id"])}
+        processed = await db["processed_events"].find_one({"event_id": event.eventId})
+        if processed:
+            doc = await db["notifications"].find_one({"_id": ObjectId(processed["notification_id"])})
+            if doc:
+                attempt.mark_duplicate()
+                return _serialize(doc)
+
+        doc = notification_to_doc(
+            user_id=event.userId,
+            type=event.eventType,
+            message=_message_for_event(event),
+            status="CREATED",
+            source_id=event.sourceId,
+            metadata=_metadata_for_event(event),
         )
-        if doc:
-            return _serialize(doc)
-
-    doc = notification_to_doc(
-        user_id=event.userId,
-        type=event.eventType,
-        message=_message_for_event(event),
-        status="CREATED",
-        source_id=event.sourceId,
-        metadata=_metadata_for_event(event),
-    )
-    result = await db["notifications"].insert_one(doc)
-    await db["processed_events"].insert_one(
-        processed_event_to_doc(event.eventId, str(result.inserted_id))
-    )
-    doc["_id"] = result.inserted_id
-    return _serialize(doc)
+        result = await db["notifications"].insert_one(doc)
+        await db["processed_events"].insert_one(processed_event_to_doc(event.eventId, str(result.inserted_id)))
+        doc["_id"] = result.inserted_id
+        attempt.mark_success()
+        return _serialize(doc)
+    finally:
+        attempt.record()
 
 
 def _message_for_event(event: BusinessEvent) -> str:

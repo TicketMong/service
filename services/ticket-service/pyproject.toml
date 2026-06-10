@@ -4,9 +4,11 @@ version = "0.1.0"
 description = "Ticket service FastAPI application"
 requires-python = ">=3.12"
 dependencies = [
+    "blinker==1.9.0",
     "fastapi==0.124.0",
     "contracts",
     "kafka-utils",
+    "metrics",
     "middleware",
     "observability",
     "server",

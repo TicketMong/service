@@ -63,6 +63,9 @@ def test_duplicate_issue_returns_existing_ticket(monkeypatch: pytest.MonkeyPatch
     second = client.post("/tickets/issue", json=ticket_issue_request())
 
     assert first.json()["id"] == second.json()["id"]
+    metrics = client.get("/metrics").text
+    assert_metric_labels(metrics, "tickets_issued_total", result="success", source="api")
+    assert_metric_labels(metrics, "tickets_issued_total", result="duplicate", source="api")
 
 
 def test_issue_ticket_publishes_ticket_issued_event(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -121,6 +124,9 @@ def test_payment_approved_event_issues_ticket(monkeypatch: pytest.MonkeyPatch) -
     assert ticket is not None
     assert ticket.reservation_id == "reservation-1"
     assert dict(producer.sent[0][2])["correlation_id"] == b"corr-1"
+    metrics = client.get("/metrics").text
+    assert_metric_labels(metrics, "ticket_events_consumed_total", event_type="payment-approved", result="success", topic="payment-approved")
+    assert_metric_labels(metrics, "ticket_events_published_total", event_type="ticket-issued", result="success")
 
 
 def test_duplicate_payment_event_does_not_create_duplicate_ticket(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -134,6 +140,21 @@ def test_duplicate_payment_event_does_not_create_duplicate_ticket(monkeypatch: p
     from app.models import Ticket
     count = db.query(Ticket).count()
     assert count == 1
+    metrics = client.get("/metrics").text
+    assert_metric_labels(metrics, "ticket_events_consumed_total", event_type="payment-approved", result="duplicate", topic="payment-approved")
+
+
+def test_issue_ticket_records_publish_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ticket_service.s3, "upload_qr", lambda *args: None)
+    monkeypatch.setattr(ticket_service.s3, "upload_pdf", lambda *args: None)
+    db = TestingSessionLocal()
+
+    with pytest.raises(RuntimeError, match="kafka unavailable"):
+        asyncio.run(ticket_service.issue_ticket(db, ticket_issue_request_model(), FailingKafkaProducer()))
+
+    metrics = client.get("/metrics").text
+    assert_metric_labels(metrics, "ticket_events_published_total", event_type="ticket-issued", result="failure")
+    assert_metric_labels(metrics, "tickets_issued_total", result="failure", source="api")
 
 
 def test_kafka_event_handlers_bind_topic_outside_consumer(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -255,6 +276,12 @@ def ticket_issue_request() -> dict:
     }
 
 
+def ticket_issue_request_model():
+    from app.schemas import TicketIssueRequest
+
+    return TicketIssueRequest.model_validate(ticket_issue_request())
+
+
 def payment_approved_event() -> dict:
     return {
         "eventId": "event-payment-1",
@@ -282,12 +309,22 @@ def _mock_kafka_and_s3(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ticket_service.s3, "upload_pdf", lambda *args: None)
 
 
+def assert_metric_labels(metrics: str, metric_name: str, **labels: str) -> None:
+    label_fragments = [f'{key}="{value}"' for key, value in {"service_name": "ticket-service", **labels}.items()]
+    assert any(line.startswith(metric_name + "{") and all(fragment in line for fragment in label_fragments) for line in metrics.splitlines())
+
+
 class FakeKafkaProducer:
     def __init__(self) -> None:
         self.sent: list[tuple[str, dict, list[tuple[str, bytes]]]] = []
 
     async def send_and_wait(self, topic: str, payload: dict, *, headers: list[tuple[str, bytes]]) -> None:
         self.sent.append((topic, payload, headers))
+
+
+class FailingKafkaProducer:
+    async def send_and_wait(self, topic: str, payload: dict, *, headers: list[tuple[str, bytes]]) -> None:
+        raise RuntimeError("kafka unavailable")
 
 
 class FakeMessage:

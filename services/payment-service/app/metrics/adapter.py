@@ -1,16 +1,23 @@
-from blinker import ANY
+from metrics import (
+    CommonServiceLabel,
+    MetricHandleMap,
+    MetricLabelEvent,
+    connect_metrics_for_events,
+    create_metrics_for_events,
+)
 from prometheus_client import CollectorRegistry
 
-from app.metrics.prometheus import (
-    payment_events_published_total,
-    payment_request_duration_seconds,
-    payments_total,
+from app.metrics.events import PaymentEventPublishRecorded, PaymentRecorded
+from app.metrics.recorder import payment_telemetry_recorded
+
+
+PAYMENT_SERVICE_LABELS = (
+    CommonServiceLabel.SERVICE_NAME.value,
+    CommonServiceLabel.SERVICE_ENVIRONMENT.value,
 )
-from app.metrics.telemetry_events import (
-    PaymentEventPublishRecorded,
+PAYMENT_METRIC_EVENTS: tuple[type[MetricLabelEvent], ...] = (
     PaymentRecorded,
-    payment_event_publish_recorded,
-    payment_recorded,
+    PaymentEventPublishRecorded,
 )
 
 
@@ -23,39 +30,20 @@ class PaymentMetricsAdapter:
             "service_name": service_name,
             "service_environment": service_environment,
         }
-        self._payments_total = payments_total(registry)
-        self._payment_duration = payment_request_duration_seconds(registry)
-        self._payment_events_published_total = payment_events_published_total(registry)
+        self._metrics: MetricHandleMap = create_metrics_for_events(
+            registry,
+            service_label_names=PAYMENT_SERVICE_LABELS,
+            event_types=PAYMENT_METRIC_EVENTS,
+        )
 
     def connect(self) -> None:
         """결제 telemetry signal과 Prometheus 기록 함수를 연결한다."""
-        payment_recorded.connect(self.record_payment, sender=ANY, weak=False)
-        payment_event_publish_recorded.connect(self.record_payment_event_publish, sender=ANY, weak=False)
-
-    def record_payment(self, sender: object, *, event: PaymentRecorded) -> None:
-        """결제 결과 counter와 처리 시간 histogram을 기록한다."""
-        labels = {
-            **self._service_labels,
-            "method": event.method.value,
-            "result": event.result.value,
-            "error_code": event.error_code.value,
-            "failure_kind": event.failure_kind.value,
-            "retryable": event.retryable.value,
-        }
-        self._payments_total.labels(**labels).inc()
-        self._payment_duration.labels(
-            **self._service_labels,
-            method=event.method.value,
-            result=event.result.value,
-        ).observe(event.duration_seconds)
-
-    def record_payment_event_publish(self, sender: object, *, event: PaymentEventPublishRecorded) -> None:
-        """결제 이벤트 발행 결과 counter를 기록한다."""
-        self._payment_events_published_total.labels(
-            **self._service_labels,
-            event_type=event.event_type.value,
-            result=event.result.value,
-        ).inc()
+        connect_metrics_for_events(
+            payment_telemetry_recorded,
+            self._metrics,
+            self._service_labels,
+            PAYMENT_METRIC_EVENTS,
+        )
 
 
 def configure_payment_metrics(

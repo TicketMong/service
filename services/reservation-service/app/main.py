@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from prometheus_client import CollectorRegistry
 from server.operational import (
     ReadinessCheck,
     register_operational_handlers,
@@ -13,6 +14,7 @@ from app.config import settings
 from app.database import engine, init_db
 from app.exceptions import register_exception_handlers
 from app.kafka import create_producer
+from app.metrics import configure_reservation_metrics
 from app.observability import configure_app_observability
 from app.routers import router as reservation_router
 
@@ -27,6 +29,15 @@ def _readiness_checks() -> dict[str, ReadinessCheck]:
         ),
         "database": sqlalchemy_readiness_check(engine),
     }
+
+
+def _configure_reservation_service_metrics(registry: CollectorRegistry, *, service_environment: str) -> None:
+    """reservation-service 전용 Prometheus metric을 운영 registry에 등록한다."""
+    configure_reservation_metrics(
+        registry,
+        service_name=settings.service_name,
+        service_environment=service_environment,
+    )
 
 
 @asynccontextmanager
@@ -54,6 +65,10 @@ def create_app() -> FastAPI:
         service_version=observability_config.service_version,
         service_environment=observability_config.service_environment,
         readiness_checks=_readiness_checks(),
+        configure_metrics=lambda registry: _configure_reservation_service_metrics(
+            registry,
+            service_environment=observability_config.service_environment,
+        ),
     )
 
     @app.get("/health")

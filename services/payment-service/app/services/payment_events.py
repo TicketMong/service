@@ -7,12 +7,14 @@ from uuid import uuid4
 
 from aiokafka.errors import KafkaError
 from kafka_utils import build_producer_headers
+from metrics import MetricResult
 from sqlalchemy.orm import Session
 
 from app.auth import UserContext
 from app.config import settings
 from app.kafka import KafkaProducer
 from app.metrics import PaymentEventType
+from app.metrics.events import PaymentEventPublishRecorded
 from app.metrics.recorder import PaymentTelemetryRecorder
 from app.models import Payment, PaymentEvent
 from app.schemas import CreatePaymentRequest
@@ -91,7 +93,9 @@ class PaymentEventDispatcher:
             )
         except (KafkaError, RuntimeError) as exc:
             self._mark_failed(event, exc)
-            self._telemetry.record_event_publish_failure(event_type)
+            self._telemetry.record(
+                PaymentEventPublishRecorded(event_type=event_type, result=MetricResult.FAILURE)
+            )
             raise
 
         event.publish_attempts += 1
@@ -100,7 +104,9 @@ class PaymentEventDispatcher:
         event.last_publish_error = None
 
         self._db.commit()
-        self._telemetry.record_event_publish_success(event_type)
+        self._telemetry.record(
+            PaymentEventPublishRecorded(event_type=event_type, result=MetricResult.SUCCESS)
+        )
 
     def _mark_failed(self, event: PaymentEvent, exc: KafkaError | RuntimeError) -> None:
         """실패한 발행 시도의 outbox 상태를 저장한다."""

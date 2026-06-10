@@ -1,41 +1,36 @@
 from time import perf_counter
 
-from metrics import FailureKind, MetricResult, Retryable
+from blinker import Namespace
+from metrics import FailureKind, MetricLabelEvent, MetricResult, Retryable
 
-from app.metrics.labels import PaymentErrorCode, PaymentEventType, payment_method_label
-from app.metrics.telemetry_events import (
-    PaymentEventPublishRecorded,
-    PaymentRecorded,
-    publish_payment_event_publish_recorded,
-    publish_payment_recorded,
-)
+from app.metrics.events import PaymentRecorded
+from app.metrics.labels import PaymentErrorCode, payment_method_label
+
+
+payment_signals = Namespace()
+payment_telemetry_recorded = payment_signals.signal("payment.telemetry_recorded")
 
 
 class PaymentTelemetryRecorder:
+    def __init__(self, sender: str = "payment-service") -> None:
+        """결제 telemetry signal sender를 준비한다."""
+        self._sender = sender
+
     def start_payment(self, method: str) -> "PaymentAttemptRecorder":
         """결제 시도 metric 기록기를 시작한다."""
         # 결제 요청 단위로 처리 시간과 최종 결과를 추적한다.
-        return PaymentAttemptRecorder(method)
+        return PaymentAttemptRecorder(method, recorder=self)
 
-    def record_event_publish_success(self, event_type: PaymentEventType) -> None:
-        """결제 이벤트 발행 성공을 telemetry event로 남긴다."""
-        # Kafka 발행 성공은 결제 결과와 별도 metric으로 남긴다.
-        publish_payment_event_publish_recorded(
-            PaymentEventPublishRecorded(event_type=event_type, result=MetricResult.SUCCESS)
-        )
-
-    def record_event_publish_failure(self, event_type: PaymentEventType) -> None:
-        """결제 이벤트 발행 실패를 telemetry event로 남긴다."""
-        # 발행 실패도 예외 흐름은 유지하고 metric만 추가로 남긴다.
-        publish_payment_event_publish_recorded(
-            PaymentEventPublishRecorded(event_type=event_type, result=MetricResult.FAILURE)
-        )
+    def record(self, event: MetricLabelEvent) -> None:
+        """결제 telemetry event를 단일 signal로 발행한다."""
+        payment_telemetry_recorded.send(self._sender, event=event)
 
 
 class PaymentAttemptRecorder:
-    def __init__(self, method: str) -> None:
+    def __init__(self, method: str, *, recorder: PaymentTelemetryRecorder) -> None:
         """결제 시도 metric의 기본 실패 상태를 준비한다."""
         # method는 낮은 cardinality label 값으로 정규화한다.
+        self._recorder = recorder
         self._started_at = perf_counter()
         self._method = payment_method_label(method)
         self._result = MetricResult.FAILURE
@@ -72,7 +67,7 @@ class PaymentAttemptRecorder:
     def record(self) -> None:
         """결제 시도 metric을 최종 기록한다."""
         # 최종 metric 기록은 한 곳에서만 수행한다.
-        publish_payment_recorded(
+        self._recorder.record(
             PaymentRecorded(
                 method=self._method,
                 result=self._result,

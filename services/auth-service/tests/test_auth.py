@@ -56,6 +56,24 @@ def test_login_me_logout_and_audit_logs() -> None:
 
     logged_out_refresh_response = client.post("/auth/refresh", json={"refreshToken": refreshed["refreshToken"]})
     assert logged_out_refresh_response.status_code == 401
+    metrics = client.get("/metrics").text
+    assert_metric_labels(metrics, "auth_attempts_total", action="login", error_code="none", result="success")
+    assert_metric_labels(metrics, "auth_attempts_total", action="me", error_code="none", result="success")
+    assert_metric_labels(metrics, "auth_attempts_total", action="logout", error_code="none", result="success")
+    assert_metric_labels(metrics, "auth_tokens_issued_total", token_type="access")
+    assert_metric_labels(metrics, "auth_token_revocations_total", reason="logout", token_type="access")
+    assert_metric_labels(metrics, "audit_events_total", event_type="login_succeeded", outcome="allow")
+
+
+def test_failed_login_records_auth_rejection_metric() -> None:
+    response = client.post(
+        "/auth/login",
+        json={"email": "admin@example.com", "password": "wrong-password"},
+    )
+
+    assert response.status_code == 401
+    metrics = client.get("/metrics").text
+    assert_metric_labels(metrics, "auth_attempts_total", action="login", error_code="auth.invalid_credentials", result="rejection")
 
 
 def test_access_token_contains_ticketing_claim_contract() -> None:
@@ -118,3 +136,8 @@ def test_demo_accounts_are_exposed_for_frontend_login_shortcuts() -> None:
     body = response.json()
     assert {account["role"] for account in body} == {"CUSTOMER", "PROVIDER", "ADMIN"}
     assert any(account["email"] == "customer@example.com" for account in body)
+
+
+def assert_metric_labels(metrics: str, metric_name: str, **labels: str) -> None:
+    label_fragments = [f'{key}="{value}"' for key, value in {"service_name": "auth-service", **labels}.items()]
+    assert any(line.startswith(metric_name + "{") and all(fragment in line for fragment in label_fragments) for line in metrics.splitlines())

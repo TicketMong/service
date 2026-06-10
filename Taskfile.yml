@@ -130,16 +130,9 @@ tasks:
         fi
         build_platforms='{{.DOCKER_BUILD_PLATFORMS}}'
         if [ -z "${build_platforms}" ]; then
-          printf '%s\n' 'DOCKER_BUILD_PLATFORMS is required and must include linux/arm64.' >&2
+          printf '%s\n' 'DOCKER_BUILD_PLATFORMS is required.' >&2
           exit 2
         fi
-        case ",${build_platforms}," in
-          *,linux/arm64,*) ;;
-          *)
-            printf 'DOCKER_BUILD_PLATFORMS must include linux/arm64, got: %s\n' "${build_platforms}" >&2
-            exit 2
-            ;;
-        esac
         cache_args=""
         cache_from='{{.DOCKER_BUILD_CACHE_FROM}}'
         cache_to='{{.DOCKER_BUILD_CACHE_TO}}'
@@ -272,16 +265,9 @@ tasks:
         fi
         build_platforms='{{.DOCKER_BUILD_PLATFORMS}}'
         if [ -z "${build_platforms}" ]; then
-          printf '%s\n' 'DOCKER_BUILD_PLATFORMS is required and must include linux/arm64.' >&2
+          printf '%s\n' 'DOCKER_BUILD_PLATFORMS is required.' >&2
           exit 2
         fi
-        case ",${build_platforms}," in
-          *,linux/arm64,*) ;;
-          *)
-            printf 'DOCKER_BUILD_PLATFORMS must include linux/arm64, got: %s\n' "${build_platforms}" >&2
-            exit 2
-            ;;
-        esac
         cache_args=""
         cache_from='{{.DOCKER_BUILD_CACHE_FROM}}'
         cache_to='{{.DOCKER_BUILD_CACHE_TO}}'
@@ -355,9 +341,77 @@ tasks:
   dev-images-build:
     desc: Build Docker Desktop dev images with DEV_IMAGE_* variables.
     cmds:
-      - task app-images-build IMAGE_REGISTRY={{.DEV_IMAGE_REGISTRY}} IMAGE_NAMESPACE={{.DEV_IMAGE_NAMESPACE}} IMAGE_TAG={{.DEV_IMAGE_TAG}}
+      - |
+        set -eu
+        local_docker_build_platform() {
+          arch="$(uname -m 2>/dev/null || true)"
+          case "${arch}" in
+            arm64|aarch64)
+              printf '%s\n' 'linux/arm64'
+              return 0
+              ;;
+            x86_64|amd64)
+              printf '%s\n' 'linux/amd64'
+              return 0
+              ;;
+          esac
+          docker_arch="$(docker info --format '{{"{{"}}.Architecture{{"}}"}}' 2>/dev/null || true)"
+          case "${docker_arch}" in
+            arm64|aarch64)
+              printf '%s\n' 'linux/arm64'
+              return 0
+              ;;
+            x86_64|amd64)
+              printf '%s\n' 'linux/amd64'
+              return 0
+              ;;
+          esac
+          printf 'Unsupported local build architecture: uname=%s docker=%s\n' "${arch}" "${docker_arch}" >&2
+          return 2
+        }
+        dev_build_platform="$(local_docker_build_platform)"
+        printf 'Using local Docker build platform: %s\n' "${dev_build_platform}"
+        task app-images-build \
+          IMAGE_REGISTRY={{.DEV_IMAGE_REGISTRY}} \
+          IMAGE_NAMESPACE={{.DEV_IMAGE_NAMESPACE}} \
+          IMAGE_TAG={{.DEV_IMAGE_TAG}} \
+          DOCKER_BUILD_PLATFORMS="${dev_build_platform}"
 
   dev-images-push:
     desc: Push Docker Desktop dev images with DEV_IMAGE_* variables.
     cmds:
-      - task app-images-push IMAGE_REGISTRY={{.DEV_IMAGE_REGISTRY}} IMAGE_NAMESPACE={{.DEV_IMAGE_NAMESPACE}} IMAGE_TAG={{.DEV_IMAGE_TAG}}
+      - |
+        set -eu
+        local_docker_build_platform() {
+          arch="$(uname -m 2>/dev/null || true)"
+          case "${arch}" in
+            arm64|aarch64)
+              printf '%s\n' 'linux/arm64'
+              return 0
+              ;;
+            x86_64|amd64)
+              printf '%s\n' 'linux/amd64'
+              return 0
+              ;;
+          esac
+          docker_arch="$(docker info --format '{{"{{"}}.Architecture{{"}}"}}' 2>/dev/null || true)"
+          case "${docker_arch}" in
+            arm64|aarch64)
+              printf '%s\n' 'linux/arm64'
+              return 0
+              ;;
+            x86_64|amd64)
+              printf '%s\n' 'linux/amd64'
+              return 0
+              ;;
+          esac
+          printf 'Unsupported local build architecture: uname=%s docker=%s\n' "${arch}" "${docker_arch}" >&2
+          return 2
+        }
+        dev_build_platform="$(local_docker_build_platform)"
+        printf 'Using local Docker build platform: %s\n' "${dev_build_platform}"
+        task app-images-push \
+          IMAGE_REGISTRY={{.DEV_IMAGE_REGISTRY}} \
+          IMAGE_NAMESPACE={{.DEV_IMAGE_NAMESPACE}} \
+          IMAGE_TAG={{.DEV_IMAGE_TAG}} \
+          DOCKER_BUILD_PLATFORMS="${dev_build_platform}"

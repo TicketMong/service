@@ -1,7 +1,13 @@
 from fastapi import Request
 from sqlalchemy.orm import Session
 
+from app.metrics.events import AuditEventRecorded
+from app.metrics.labels import audit_event_type_label, audit_outcome_label
 from app.models import AuditLog, User
+from app.metrics.recorder import AuthTelemetryRecorder
+
+
+auth_metrics = AuthTelemetryRecorder()
 
 
 def record_audit(
@@ -14,6 +20,7 @@ def record_audit(
     user_email: str | None = None,
     details: str | None = None,
 ) -> None:
+    """감사 로그를 저장하고 생성 결과 metric을 남긴다."""
     db.add(
         AuditLog(
             event_type=event_type,
@@ -30,3 +37,6 @@ def record_audit(
         )
     )
     db.commit()
+    auth_metrics.record(
+        AuditEventRecorded(event_type=audit_event_type_label(event_type), outcome=audit_outcome_label(outcome))
+    )

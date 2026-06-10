@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request, status
 from observability import register_error_handlers
+from prometheus_client import CollectorRegistry
 from sqlalchemy.orm import Session
 from server.operational import register_operational_handlers, sqlalchemy_readiness_check
 
@@ -9,6 +10,10 @@ from app import models
 from app.audit import record_audit
 from app.config import settings
 from app.database import SessionLocal, engine, get_db
+from app.metrics import configure_auth_metrics
+from app.metrics.events import AuthTokenIssuedRecorded, AuthTokenRevocationRecorded
+from app.metrics.labels import AuthAction, AuthErrorCode, AuthRevocationReason, AuthTokenType
+from app.metrics.recorder import AuthTelemetryRecorder
 from app.models import AuditLog, RefreshToken, RevokedToken, User
 from app.observability import configure_app_observability
 from app.schemas import (
@@ -28,6 +33,18 @@ models.Base.metadata.create_all(bind=engine)
 with SessionLocal() as seed_db:
     seed_demo_users(seed_db)
 
+auth_metrics = AuthTelemetryRecorder()
+
+
+def _configure_auth_service_metrics(registry: CollectorRegistry, *, service_environment: str) -> None:
+    """auth-service 전용 Prometheus metric을 운영 registry에 등록한다."""
+    configure_auth_metrics(
+        registry,
+        service_name=settings.service_name,
+        service_environment=service_environment,
+    )
+
+
 observability_config = settings.observability_config()
 app = FastAPI(title=settings.service_name)
 configure_app_observability(app, observability_config)
@@ -43,6 +60,10 @@ register_operational_handlers(
     service_version=observability_config.service_version,
     service_environment=observability_config.service_environment,
     readiness_checks={"database": sqlalchemy_readiness_check(engine)},
+    configure_metrics=lambda registry: _configure_auth_service_metrics(
+        registry,
+        service_environment=observability_config.service_environment,
+    ),
     include_timestamp=True,
 )
 
@@ -54,24 +75,32 @@ def health() -> dict[str, str]:
 
 @app.post("/auth/login", response_model=TokenResponse)
 def login(request_body: LoginRequest, request: Request, db: Session = Depends(get_db)) -> TokenResponse:
-    user = db.query(User).filter(User.email == request_body.email.lower()).one_or_none()
-    if user is None or not verify_password(request_body.password, user.password_hash):
-        record_audit(
-            db,
-            request,
-            event_type="LOGIN_FAILED",
-            outcome="DENIED",
-            user_email=request_body.email.lower(),
-            details="invalid credentials",
-        )
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
-    if not user.is_active:
-        record_audit(db, request, event_type="LOGIN_FAILED", outcome="DENIED", user=user, details="inactive account")
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inactive account")
+    """로그인 allow/deny 결과를 metric으로 남긴다."""
+    attempt = auth_metrics.start_attempt(AuthAction.LOGIN)
+    try:
+        user = db.query(User).filter(User.email == request_body.email.lower()).one_or_none()
+        if user is None or not verify_password(request_body.password, user.password_hash):
+            record_audit(
+                db,
+                request,
+                event_type="LOGIN_FAILED",
+                outcome="DENIED",
+                user_email=request_body.email.lower(),
+                details="invalid credentials",
+            )
+            attempt.mark_rejection(AuthErrorCode.INVALID_CREDENTIALS)
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+        if not user.is_active:
+            record_audit(db, request, event_type="LOGIN_FAILED", outcome="DENIED", user=user, details="inactive account")
+            attempt.mark_rejection(AuthErrorCode.INACTIVE_ACCOUNT)
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inactive account")
 
-    token = _issue_token_response(db, user)
-    record_audit(db, request, event_type="LOGIN_SUCCEEDED", outcome="ALLOW", user=user)
-    return token
+        token = _issue_token_response(db, user)
+        record_audit(db, request, event_type="LOGIN_SUCCEEDED", outcome="ALLOW", user=user)
+        attempt.mark_success()
+        return token
+    finally:
+        attempt.record()
 
 
 @app.get("/auth/demo-accounts", response_model=list[DemoAccountResponse])
@@ -95,10 +124,19 @@ def me(
     authorization: str | None = Header(default=None, alias="Authorization"),
     db: Session = Depends(get_db),
 ) -> UserResponse:
-    payload = _require_valid_payload(authorization, db)
-    user = _get_user_from_payload(payload, db)
-    record_audit(db, request, event_type="ME_VIEWED", outcome="ALLOW", user=user)
-    return UserResponse.model_validate(user)
+    """내 사용자 조회 allow/deny 결과를 metric으로 남긴다."""
+    attempt = auth_metrics.start_attempt(AuthAction.ME)
+    try:
+        payload = _require_valid_payload(authorization, db)
+        user = _get_user_from_payload(payload, db)
+        record_audit(db, request, event_type="ME_VIEWED", outcome="ALLOW", user=user)
+        attempt.mark_success()
+        return UserResponse.model_validate(user)
+    except HTTPException as exc:
+        attempt.mark_http_exception(exc)
+        raise
+    finally:
+        attempt.record()
 
 
 @app.post("/auth/refresh", response_model=TokenResponse)
@@ -107,16 +145,33 @@ def refresh_token(
     request: Request,
     db: Session = Depends(get_db),
 ) -> TokenResponse:
-    stored_token = _get_active_refresh_token(request_body.refreshToken, db)
-    user = db.get(User, stored_token.user_id)
-    if user is None or not user.is_active:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    """refresh token 교체 allow/deny 결과를 metric으로 남긴다."""
+    attempt = auth_metrics.start_attempt(AuthAction.REFRESH)
+    try:
+        stored_token = _get_active_refresh_token(request_body.refreshToken, db)
+        user = db.get(User, stored_token.user_id)
+        if user is None or not user.is_active:
+            attempt.mark_rejection(AuthErrorCode.USER_NOT_FOUND)
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
-    stored_token.revoked_at = datetime.now(UTC)
-    token_response = _issue_token_response(db, user)
-    db.commit()
-    record_audit(db, request, event_type="TOKEN_REFRESHED", outcome="ALLOW", user=user)
-    return token_response
+        stored_token.revoked_at = datetime.now(UTC)
+        auth_metrics.record(
+            AuthTokenRevocationRecorded(
+                token_type=AuthTokenType.REFRESH,
+                reason=AuthRevocationReason.REFRESH_ROTATION,
+            )
+        )
+        token_response = _issue_token_response(db, user)
+        db.commit()
+        record_audit(db, request, event_type="TOKEN_REFRESHED", outcome="ALLOW", user=user)
+        attempt.mark_success()
+        return token_response
+    except HTTPException as exc:
+        if attempt.has_default_failure():
+            attempt.mark_http_exception(exc)
+        raise
+    finally:
+        attempt.record()
 
 
 @app.post("/auth/logout")
@@ -126,17 +181,29 @@ def logout(
     authorization: str | None = Header(default=None, alias="Authorization"),
     db: Session = Depends(get_db),
 ) -> dict[str, str]:
-    payload = _require_valid_payload(authorization, db)
-    user = _get_user_from_payload(payload, db)
-    token_id = str(payload["jti"])
-    expires_at = datetime.fromtimestamp(int(payload["exp"]), UTC)
-    if db.query(RevokedToken).filter(RevokedToken.token_id == token_id).one_or_none() is None:
-        db.add(RevokedToken(token_id=token_id, user_id=user.id, expires_at=expires_at))
-    if request_body and request_body.refreshToken:
-        _revoke_refresh_token(request_body.refreshToken, db)
-    db.commit()
-    record_audit(db, request, event_type="LOGOUT", outcome="ALLOW", user=user)
-    return {"status": "ok"}
+    """로그아웃 allow/deny 결과와 토큰 무효화를 metric으로 남긴다."""
+    attempt = auth_metrics.start_attempt(AuthAction.LOGOUT)
+    try:
+        payload = _require_valid_payload(authorization, db)
+        user = _get_user_from_payload(payload, db)
+        token_id = str(payload["jti"])
+        expires_at = datetime.fromtimestamp(int(payload["exp"]), UTC)
+        if db.query(RevokedToken).filter(RevokedToken.token_id == token_id).one_or_none() is None:
+            db.add(RevokedToken(token_id=token_id, user_id=user.id, expires_at=expires_at))
+            auth_metrics.record(
+                AuthTokenRevocationRecorded(token_type=AuthTokenType.ACCESS, reason=AuthRevocationReason.LOGOUT)
+            )
+        if request_body and request_body.refreshToken:
+            _revoke_refresh_token(request_body.refreshToken, db)
+        db.commit()
+        record_audit(db, request, event_type="LOGOUT", outcome="ALLOW", user=user)
+        attempt.mark_success()
+        return {"status": "ok"}
+    except HTTPException as exc:
+        attempt.mark_http_exception(exc)
+        raise
+    finally:
+        attempt.record()
 
 
 @app.get("/auth/audit-logs", response_model=list[AuditLogResponse])
@@ -178,6 +245,7 @@ def _get_user_from_payload(payload: dict, db: Session) -> User:
 
 
 def _issue_token_response(db: Session, user: User) -> TokenResponse:
+    """access/refresh token을 발급하고 token metric을 남긴다."""
     access_token, _token_id, _expires_at = create_access_token(
         user_id=user.id,
         email=user.email,
@@ -186,6 +254,8 @@ def _issue_token_response(db: Session, user: User) -> TokenResponse:
     refresh_token, token_hash, refresh_expires_at = create_refresh_token()
     db.add(RefreshToken(token_hash=token_hash, user_id=user.id, expires_at=refresh_expires_at))
     db.flush()
+    auth_metrics.record(AuthTokenIssuedRecorded(token_type=AuthTokenType.ACCESS))
+    auth_metrics.record(AuthTokenIssuedRecorded(token_type=AuthTokenType.REFRESH))
     return TokenResponse(
         accessToken=access_token,
         refreshToken=refresh_token,
@@ -203,9 +273,13 @@ def _get_active_refresh_token(refresh_token: str, db: Session) -> RefreshToken:
 
 
 def _revoke_refresh_token(refresh_token: str, db: Session) -> None:
+    """refresh token을 무효화하고 실제 변경이 있을 때 metric을 남긴다."""
     stored_token = db.query(RefreshToken).filter(RefreshToken.token_hash == hash_refresh_token(refresh_token)).one_or_none()
     if stored_token is not None and stored_token.revoked_at is None:
         stored_token.revoked_at = datetime.now(UTC)
+        auth_metrics.record(
+            AuthTokenRevocationRecorded(token_type=AuthTokenType.REFRESH, reason=AuthRevocationReason.LOGOUT)
+        )
 
 
 def _is_expired(value: datetime) -> bool:

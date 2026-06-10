@@ -6,17 +6,28 @@ from observability import TraceRecorder, trace_recorder
 
 from app import entities as model
 from app import schemas
-from app.exceptions import ConflictError
+from app.exceptions import ConflictError, NotFoundError
+from app.metrics.labels import ReservationCommand
+from app.metrics.recorder import ReservationTelemetryRecorder
 from app.services.base import ACTIVE_STATUSES, ReservationDomainService, new_id, now_utc
 from app.services.serializers import active_seat_key, reservation_response
 
 
 class ReservationCommandService(ReservationDomainService):
-    def __init__(self, db: Session, trace: TraceRecorder | None = None) -> None:
+    def __init__(
+        self,
+        db: Session,
+        trace: TraceRecorder | None = None,
+        telemetry: ReservationTelemetryRecorder | None = None,
+    ) -> None:
+        """예약 command 실행에 필요한 저장소와 관측성 의존성을 보관한다."""
         super().__init__(db)
         self.trace = trace or trace_recorder()
+        self.telemetry = telemetry or ReservationTelemetryRecorder()
 
     def create_reservation(self, user_id: str, request: schemas.CreateReservationRequest) -> schemas.ReservationResponse:
+        """예약을 생성하고 좌석 충돌/거절/실패 metric을 남긴다."""
+        attempt = self.telemetry.start_command(ReservationCommand.CREATE)
         trace = self.trace
         concert_id = concert_id_from_request(request)
         trace.attribute("app.use_case", "reserve_seat")
@@ -24,51 +35,76 @@ class ReservationCommandService(ReservationDomainService):
         trace.attribute("performance.id", request.performanceId)
         trace.attribute("seat.id", request.seatId)
 
-        with trace.span("reservation.reserve_seat"):
-            sales_state = self.sales.get_sales_state(concert_id)
-            if sales_state is not None and sales_state.sales_status in {"paused", "closed"}:
-                raise ConflictError("sales.not_open", "Sales are not open for this concert.")
-            if self.reservations.find_active_reservation(request.performanceId, request.seatId) is not None:
-                raise ConflictError("reservation.conflict", "Seat is already reserved.", {"seatId": request.seatId})
-            created_at = now_utc()
-            reservation = model.Reservation(
-                id=new_id("rsv"),
-                user_id=user_id,
-                concert_id=concert_id,
-                showtime_id=request.showtimeId or request.performanceId,
-                performance_id=request.performanceId,
-                seat_id=request.seatId,
-                status="pending",
-                active_seat_key=active_seat_key(request.performanceId, request.seatId),
-                expires_at=created_at + timedelta(minutes=5),
-                created_at=created_at,
-            )
-            self.add(reservation)
-            self._commit_or_reservation_conflict()
-            trace.attribute("reservation.id", reservation.id)
-            trace.event("seat.hold.created", {"reservation.id": reservation.id, "seat.id": reservation.seat_id})
+        try:
+            with trace.span("reservation.reserve_seat"):
+                sales_state = self.sales.get_sales_state(concert_id)
+                if sales_state is not None and sales_state.sales_status in {"paused", "closed"}:
+                    raise ConflictError("sales.not_open", "Sales are not open for this concert.")
+                if self.reservations.find_active_reservation(request.performanceId, request.seatId) is not None:
+                    raise ConflictError("reservation.conflict", "Seat is already reserved.", {"seatId": request.seatId})
+                created_at = now_utc()
+                reservation = model.Reservation(
+                    id=new_id("rsv"),
+                    user_id=user_id,
+                    concert_id=concert_id,
+                    showtime_id=request.showtimeId or request.performanceId,
+                    performance_id=request.performanceId,
+                    seat_id=request.seatId,
+                    status="pending",
+                    active_seat_key=active_seat_key(request.performanceId, request.seatId),
+                    expires_at=created_at + timedelta(minutes=5),
+                    created_at=created_at,
+                )
+                self.add(reservation)
+                self._commit_or_reservation_conflict()
+                trace.attribute("reservation.id", reservation.id)
+                trace.event("seat.hold.created", {"reservation.id": reservation.id, "seat.id": reservation.seat_id})
 
-        return reservation_response(reservation)
+            attempt.mark_success()
+            return reservation_response(reservation)
+        except (ConflictError, NotFoundError) as exc:
+            attempt.mark_error_code(exc.code)
+            raise
+        finally:
+            attempt.record()
 
     def cancel_reservation(self, reservation_id: str) -> schemas.ReservationResponse:
-        reservation = self._reservation(reservation_id)
-        if reservation.status not in ACTIVE_STATUSES:
-            raise ConflictError("reservation.invalid_state", "Only active reservations can be canceled.")
-        reservation.status = "canceled"
-        reservation.active_seat_key = None
-        reservation.updated_at = now_utc()
-        self.commit()
-        return reservation_response(reservation)
+        """예약을 취소하고 command 결과 metric을 남긴다."""
+        attempt = self.telemetry.start_command(ReservationCommand.CANCEL)
+        try:
+            reservation = self._reservation(reservation_id)
+            if reservation.status not in ACTIVE_STATUSES:
+                raise ConflictError("reservation.invalid_state", "Only active reservations can be canceled.")
+            reservation.status = "canceled"
+            reservation.active_seat_key = None
+            reservation.updated_at = now_utc()
+            self.commit()
+            attempt.mark_success()
+            return reservation_response(reservation)
+        except (ConflictError, NotFoundError) as exc:
+            attempt.mark_error_code(exc.code)
+            raise
+        finally:
+            attempt.record()
 
     def expire_reservation(self, reservation_id: str) -> schemas.ReservationResponse:
-        reservation = self._reservation(reservation_id)
-        if reservation.status != "pending":
-            raise ConflictError("reservation.invalid_state", "Only pending reservations can be expired.")
-        reservation.status = "expired"
-        reservation.active_seat_key = None
-        reservation.updated_at = now_utc()
-        self.commit()
-        return reservation_response(reservation)
+        """예약을 만료시키고 command 결과 metric을 남긴다."""
+        attempt = self.telemetry.start_command(ReservationCommand.EXPIRE)
+        try:
+            reservation = self._reservation(reservation_id)
+            if reservation.status != "pending":
+                raise ConflictError("reservation.invalid_state", "Only pending reservations can be expired.")
+            reservation.status = "expired"
+            reservation.active_seat_key = None
+            reservation.updated_at = now_utc()
+            self.commit()
+            attempt.mark_success()
+            return reservation_response(reservation)
+        except (ConflictError, NotFoundError) as exc:
+            attempt.mark_error_code(exc.code)
+            raise
+        finally:
+            attempt.record()
 
 
 class ReservationQueryService(ReservationDomainService):

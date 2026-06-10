@@ -5,11 +5,9 @@ from app.metrics.labels import (
     PaymentMethod,
     payment_method_label,
 )
-from app.metrics.telemetry_events import (
+from app.metrics.events import (
     PaymentEventPublishRecorded,
     PaymentRecorded,
-    publish_payment_event_publish_recorded,
-    publish_payment_recorded,
 )
 
 __all__ = [
@@ -21,6 +19,4 @@ __all__ = [
     "PaymentRecorded",
     "configure_payment_metrics",
     "payment_method_label",
-    "publish_payment_event_publish_recorded",
-    "publish_payment_recorded",
 ]

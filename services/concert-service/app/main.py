@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from prometheus_client import CollectorRegistry
 from server.operational import (
     ReadinessCheck,
     register_operational_handlers,
@@ -9,6 +10,7 @@ from server.operational import (
 from app.config import settings
 from app.database import engine, init_db
 from app.exceptions import register_exception_handlers
+from app.metrics import configure_concert_metrics
 from app.observability import configure_app_observability
 from app.routers import router as concert_router
 
@@ -25,6 +27,15 @@ def _readiness_checks() -> dict[str, ReadinessCheck]:
     }
 
 
+def _configure_concert_service_metrics(registry: CollectorRegistry, *, service_environment: str) -> None:
+    """concert-service 전용 Prometheus metric을 운영 registry에 등록한다."""
+    configure_concert_metrics(
+        registry,
+        service_name=settings.service_name,
+        service_environment=service_environment,
+    )
+
+
 def create_app() -> FastAPI:
     init_db()
     observability_config = settings.observability_config()
@@ -37,6 +48,10 @@ def create_app() -> FastAPI:
         service_version=observability_config.service_version,
         service_environment=observability_config.service_environment,
         readiness_checks=_readiness_checks(),
+        configure_metrics=lambda registry: _configure_concert_service_metrics(
+            registry,
+            service_environment=observability_config.service_environment,
+        ),
     )
 
     @app.get("/health")

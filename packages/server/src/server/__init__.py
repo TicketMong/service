@@ -1,6 +1,7 @@
 from server.operational import (
     ReadinessCheck,
     configure_runtime_collectors,
+    register_debug_status_route,
     register_operational_handlers,
     required_settings_readiness_check,
     sqlalchemy_readiness_check,
@@ -53,6 +54,7 @@ __all__ = [
     "get_current_request_id",
     "instrument_fastapi_app",
     "observability_config_from_env",
+    "register_debug_status_route",
     "register_operational_handlers",
     "request_context_middleware_options",
     "request_id_middleware_options",
