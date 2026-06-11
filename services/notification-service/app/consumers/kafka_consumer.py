@@ -1,5 +1,7 @@
 import asyncio
+from collections.abc import Callable
 import json
+from typing import Any
 from aiokafka import AIOKafkaConsumer
 from kafka_utils import kafka_message_attributes, start_consumer_span
 from observability import record_exception, set_current_span_attributes
@@ -10,11 +12,18 @@ from app.database import get_db
 from app.services.notification_service import handle_business_event
 
 
-async def consume_events(stop_event: asyncio.Event) -> None:
+ConsumerFactory = Callable[..., Any]
+
+
+async def consume_events(
+    stop_event: asyncio.Event,
+    *,
+    consumer_factory: ConsumerFactory = AIOKafkaConsumer,
+) -> None:
     if not settings.kafka_bootstrap_servers:
         return
 
-    consumer = AIOKafkaConsumer(
+    consumer = consumer_factory(
         settings.reservation_created_topic,
         settings.reservation_expired_topic,
         settings.payment_approved_topic,
