@@ -43,6 +43,22 @@ def test_reservation_state_transitions_and_duplicate_conflict(db_session: Sessio
     assert canceled.status == "canceled"
 
 
+def test_ticketed_reservation_blocks_rebooking_same_seat(db_session: Session) -> None:
+    command_service = ReservationCommandService(db_session)
+    request = schemas.CreateReservationRequest(
+        concertId="concert-ticketed-lock",
+        showtimeId="showtime-ticketed-lock",
+        performanceId="perf-ticketed-lock",
+        seatId="A-1",
+    )
+    reservation = command_service.create_reservation("user-ticketed-1", request)
+
+    command_service.confirm_reservation(reservation.id)
+
+    with pytest.raises(SeatAlreadyReservedError):
+        command_service.create_reservation("user-ticketed-2", request)
+
+
 def test_create_reservation_records_manual_trace(db_session: Session) -> None:
     trace = RecordingTraceRecorder()
     command_service = ReservationCommandService(db_session, trace=trace)
