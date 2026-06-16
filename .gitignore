@@ -22,7 +22,6 @@ dashboard/dist/
 
 tests/e2e/newman/reports/
 tests/tmp/
-loadtest/reports/local/
 tmp/
 temp/
 
