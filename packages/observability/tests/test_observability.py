@@ -96,6 +96,7 @@ def test_observability_config_from_env_maps_explicit_otel_settings() -> None:
         "PYROSCOPE_SERVER_ADDRESS",
         "PYROSCOPE_APPLICATION_NAME",
         "PYROSCOPE_SAMPLE_RATE",
+        "PYROSCOPE_SPAN_PROFILES_ENABLED",
         "PYROSCOPE_ONCPU",
         "PYROSCOPE_GIL_ONLY",
         "PYROSCOPE_TAGS",
@@ -149,6 +150,7 @@ def test_observability_config_reads_pyroscope_settings_from_env() -> None:
             "PYROSCOPE_SERVER_ADDRESS": "http://pyroscope:4040",
             "PYROSCOPE_APPLICATION_NAME": "medikong.auth",
             "PYROSCOPE_SAMPLE_RATE": "50",
+            "PYROSCOPE_SPAN_PROFILES_ENABLED": "true",
             "PYROSCOPE_ONCPU": "false",
             "PYROSCOPE_GIL_ONLY": "false",
             "PYROSCOPE_TAGS": "scenario=reservation-journey-load-test, run_id=run-001",
@@ -163,6 +165,7 @@ def test_observability_config_reads_pyroscope_settings_from_env() -> None:
         server_address="http://pyroscope:4040",
         application_name="medikong.auth",
         sample_rate=50,
+        span_profiles_enabled=True,
         oncpu=False,
         gil_only=False,
         tags={
@@ -331,6 +334,105 @@ def test_configure_tracing_passes_explicit_otlp_trace_endpoint(monkeypatch) -> N
     assert providers
     assert isinstance(providers[0].span_processors[0], CallsiteSpanProcessor)
     assert isinstance(providers[0].span_processors[1], FakeBatchSpanProcessor)
+
+
+def test_configure_tracing_skips_pyroscope_span_processor_when_disabled(monkeypatch) -> None:
+    providers: list[object] = []
+    span_processors: list[object] = []
+
+    class FakeTracerProvider:
+        def __init__(self, *, resource: object) -> None:
+            self.resource = resource
+            self.span_processors = span_processors
+
+        def add_span_processor(self, processor: object) -> None:
+            self.span_processors.append(processor)
+
+    def fake_pyroscope_span_processor() -> object:
+        raise AssertionError("pyroscope span processor should not be created")
+
+    monkeypatch.setattr(tracing_module, "_tracing_configured", False)
+    monkeypatch.setattr(tracing_module, "TracerProvider", FakeTracerProvider)
+    monkeypatch.setattr(tracing_module, "_pyroscope_span_processor", fake_pyroscope_span_processor)
+    monkeypatch.setattr(tracing_module.trace, "set_tracer_provider", providers.append)
+
+    configure_process_tracing(
+        ObservabilityConfig(
+            service_name="test-service",
+            profiling=ProfilingConfig(enabled=True, span_profiles_enabled=False),
+        )
+    )
+
+    assert providers
+    assert len(span_processors) == 1
+    assert isinstance(span_processors[0], CallsiteSpanProcessor)
+
+
+def test_configure_tracing_adds_pyroscope_span_processor_when_enabled(monkeypatch) -> None:
+    providers: list[object] = []
+    pyroscope_processor = object()
+
+    class FakeTracerProvider:
+        def __init__(self, *, resource: object) -> None:
+            self.resource = resource
+            self.span_processors: list[object] = []
+
+        def add_span_processor(self, processor: object) -> None:
+            self.span_processors.append(processor)
+
+    monkeypatch.setattr(tracing_module, "_tracing_configured", False)
+    monkeypatch.setattr(tracing_module, "TracerProvider", FakeTracerProvider)
+    monkeypatch.setattr(tracing_module, "_pyroscope_span_processor", lambda: pyroscope_processor)
+    monkeypatch.setattr(tracing_module.trace, "set_tracer_provider", providers.append)
+
+    configure_process_tracing(
+        ObservabilityConfig(
+            service_name="test-service",
+            profiling=ProfilingConfig(enabled=True, span_profiles_enabled=True),
+        )
+    )
+    configure_process_tracing(
+        ObservabilityConfig(
+            service_name="test-service",
+            profiling=ProfilingConfig(enabled=True, span_profiles_enabled=True),
+        )
+    )
+
+    assert providers
+    assert providers[0].span_processors[1] is pyroscope_processor
+    assert len(providers[0].span_processors) == 2
+    assert len(providers) == 1
+
+
+def test_configure_tracing_skips_pyroscope_span_processor_when_profiling_off(monkeypatch) -> None:
+    providers: list[object] = []
+
+    class FakeTracerProvider:
+        def __init__(self, *, resource: object) -> None:
+            self.resource = resource
+            self.span_processors: list[object] = []
+
+        def add_span_processor(self, processor: object) -> None:
+            self.span_processors.append(processor)
+
+    def fake_pyroscope_span_processor() -> object:
+        raise AssertionError("pyroscope span processor should not be created")
+
+    monkeypatch.setattr(tracing_module, "_tracing_configured", False)
+    monkeypatch.setattr(tracing_module, "TracerProvider", FakeTracerProvider)
+    monkeypatch.setattr(tracing_module, "_pyroscope_span_processor", fake_pyroscope_span_processor)
+    monkeypatch.setattr(tracing_module.trace, "set_tracer_provider", providers.append)
+
+    configure_process_tracing(
+        ObservabilityConfig(
+            service_name="test-service",
+            profiling=ProfilingConfig(enabled=False, span_profiles_enabled=True),
+        )
+    )
+
+    assert providers
+    assert len(providers[0].span_processors) == 1
+    assert isinstance(providers[0].span_processors[0], CallsiteSpanProcessor)
 
 
 def test_configure_tracing_skips_unsupported_trace_exporter(monkeypatch) -> None:

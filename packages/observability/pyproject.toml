@@ -15,6 +15,7 @@ dependencies = [
     "opentelemetry-instrumentation-sqlalchemy==0.63b1",
     "opentelemetry-sdk==1.42.1",
     "pyroscope-io==0.8.14",
+    "pyroscope-otel==0.4.1",
     "structlog==25.5.0",
 ]
 

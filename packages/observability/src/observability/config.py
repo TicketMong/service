@@ -22,6 +22,7 @@ OBSERVABILITY_ENV_KEYS = (
     "PYROSCOPE_SERVER_ADDRESS",
     "PYROSCOPE_APPLICATION_NAME",
     "PYROSCOPE_SAMPLE_RATE",
+    "PYROSCOPE_SPAN_PROFILES_ENABLED",
     "PYROSCOPE_ONCPU",
     "PYROSCOPE_GIL_ONLY",
     "PYROSCOPE_TAGS",
@@ -37,6 +38,7 @@ class ProfilingConfig:
     server_address: str | None = None
     application_name: str | None = None
     sample_rate: int = DEFAULT_PYROSCOPE_SAMPLE_RATE
+    span_profiles_enabled: bool = False
     oncpu: bool = True
     gil_only: bool = True
     tags: Mapping[str, str] | None = None
@@ -112,6 +114,7 @@ def _profiling_config_from_env(service_name: str, env: Mapping[str, str]) -> Pro
         server_address=_optional_env(env, "PYROSCOPE_SERVER_ADDRESS"),
         application_name=_optional_env(env, "PYROSCOPE_APPLICATION_NAME") or service_name,
         sample_rate=_positive_int_env(env, "PYROSCOPE_SAMPLE_RATE", default=DEFAULT_PYROSCOPE_SAMPLE_RATE),
+        span_profiles_enabled=_bool_env(env, "PYROSCOPE_SPAN_PROFILES_ENABLED", default=False),
         oncpu=_bool_env(env, "PYROSCOPE_ONCPU", default=True),
         gil_only=_bool_env(env, "PYROSCOPE_GIL_ONLY", default=True),
         tags=tags,
