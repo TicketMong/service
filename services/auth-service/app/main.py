@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request, status
-from observability import register_error_handlers
+from observability import TraceRecorder, register_error_handlers, trace_recorder
 from prometheus_client import CollectorRegistry
 from sqlalchemy.orm import Session
 from server.operational import register_operational_handlers, sqlalchemy_readiness_check
@@ -38,6 +38,31 @@ with SessionLocal() as seed_db:
     seed_demo_users(seed_db)
 
 auth_metrics = AuthTelemetryRecorder()
+
+
+def _password_hash_attributes(password_hash: str) -> dict[str, str | int]:
+    """Trace에 안전하게 남길 수 있는 password hash metadata만 추출한다."""
+    try:
+        scheme, iterations, _salt_b64, _digest_b64 = password_hash.split("$", 3)
+    except ValueError:
+        return {"auth.password.scheme": "unknown"}
+
+    attributes: dict[str, str | int] = {"auth.password.scheme": scheme}
+    if iterations.isdigit():
+        attributes["auth.password.iterations"] = int(iterations)
+    return attributes
+
+
+def _verify_password_with_trace(
+    password: str,
+    password_hash: str,
+    trace: TraceRecorder | None = None,
+) -> bool:
+    recorder = trace or trace_recorder()
+    with recorder.span("auth.password.verify", _password_hash_attributes(password_hash)):
+        valid = verify_password(password, password_hash)
+        recorder.attribute("auth.password.valid", valid)
+        return valid
 
 
 def _configure_auth_service_metrics(registry: CollectorRegistry, *, service_environment: str) -> None:
@@ -93,7 +118,7 @@ def login(request_body: LoginRequest, request: Request, db: Session = Depends(ge
     attempt = auth_metrics.start_attempt(AuthAction.LOGIN)
     try:
         user = db.query(User).filter(User.email == request_body.email.lower()).one_or_none()
-        if user is None or not verify_password(request_body.password, user.password_hash):
+        if user is None or not _verify_password_with_trace(request_body.password, user.password_hash):
             record_audit(
                 db,
                 request,

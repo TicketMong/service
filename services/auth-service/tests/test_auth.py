@@ -139,6 +139,52 @@ def test_failed_login_records_auth_rejection_metric() -> None:
     assert_metric_labels(metrics, "auth_attempts_total", action="login", error_code="auth.invalid_credentials", result="rejection")
 
 
+def test_login_records_password_verify_trace_span(monkeypatch: MonkeyPatch) -> None:
+    spans: list[tuple[str, dict[str, object]]] = []
+    attributes: list[tuple[str, object]] = []
+
+    class FakeSpan:
+        def __init__(self, name: str, span_attributes: dict[str, object]) -> None:
+            self.name = name
+            self.span_attributes = span_attributes
+
+        def __enter__(self) -> None:
+            spans.append((self.name, self.span_attributes))
+            return None
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+            return None
+
+    class FakeTraceRecorder:
+        def span(self, name: str, span_attributes: dict[str, object] | None = None) -> FakeSpan:
+            return FakeSpan(name, span_attributes or {})
+
+        def attribute(self, key: str, value: object) -> None:
+            attributes.append((key, value))
+
+        def event(self, name: str, event_attributes: dict[str, object] | None = None) -> None:
+            return None
+
+    monkeypatch.setattr(app_main, "trace_recorder", lambda: FakeTraceRecorder())
+
+    response = client.post(
+        "/auth/login",
+        json={"email": "customer@example.com", "password": "customer1234"},
+    )
+
+    assert response.status_code == 200
+    assert spans == [
+        (
+            "auth.password.verify",
+            {
+                "auth.password.scheme": "pbkdf2_sha256",
+                "auth.password.iterations": app_main.settings.password_iterations,
+            },
+        )
+    ]
+    assert attributes == [("auth.password.valid", True)]
+
+
 def test_access_token_contains_ticketing_claim_contract() -> None:
     response = client.post(
         "/auth/login",
