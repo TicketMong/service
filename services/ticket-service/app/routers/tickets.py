@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.auth import UserContext, get_user_context
 from app.database import get_db
 from app.kafka import KafkaProducer, get_kafka_producer
-from app.schemas import TicketIssueRequest, TicketResponse
+from app.schemas import TicketIssueRequest, TicketListResponse, TicketResponse
 from app.services import ticket_service
 
 
@@ -22,12 +22,14 @@ async def issue_ticket(
 
 
 # 내 티켓 목록 조회
-@router.get("/me", response_model=list[TicketResponse])
+@router.get("/me", response_model=TicketListResponse)
 def list_my_tickets(
+    limit: int = Query(20, ge=1, le=100),
+    cursor: int | None = Query(None, ge=1),
     db: Session = Depends(get_db),
     user: UserContext = Depends(get_user_context),
-) -> list[TicketResponse]:
-    return ticket_service.list_my_tickets(db, user)
+) -> TicketListResponse:
+    return ticket_service.list_my_tickets(db, user, limit=limit, cursor=cursor)
 
 
 # 티켓 상세 조회

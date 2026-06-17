@@ -104,7 +104,51 @@ def test_user_can_list_my_tickets(monkeypatch: pytest.MonkeyPatch) -> None:
     response = client.get("/tickets/me", headers=user_headers(1))
 
     assert response.status_code == 200
-    assert response.json()[0]["id"] == issued["id"]
+    body = response.json()
+    assert body["items"][0]["id"] == issued["id"]
+    assert body["nextCursor"] is None
+
+
+def test_list_my_tickets_applies_limit_and_returns_next_cursor(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_kafka_and_s3(monkeypatch)
+
+    issued = issue_tickets_for_user(monkeypatch, "1", 3)
+    response = client.get("/tickets/me?limit=2", headers=user_headers(1))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [ticket["id"] for ticket in body["items"]] == [issued[0]["id"], issued[1]["id"]]
+    assert body["nextCursor"] == str(issued[1]["id"])
+
+
+def test_list_my_tickets_uses_cursor_for_next_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_kafka_and_s3(monkeypatch)
+
+    issued = issue_tickets_for_user(monkeypatch, "1", 3)
+    first_page = client.get("/tickets/me?limit=2", headers=user_headers(1)).json()
+    second_page = client.get(
+        f"/tickets/me?limit=2&cursor={first_page['nextCursor']}",
+        headers=user_headers(1),
+    )
+
+    assert second_page.status_code == 200
+    body = second_page.json()
+    assert [ticket["id"] for ticket in body["items"]] == [issued[2]["id"]]
+    assert body["nextCursor"] is None
+
+
+def test_list_my_tickets_does_not_mix_other_user_tickets(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_kafka_and_s3(monkeypatch)
+
+    user_one_tickets = issue_tickets_for_user(monkeypatch, "1", 2)
+    issue_tickets_for_user(monkeypatch, "99", 2)
+    response = client.get("/tickets/me?limit=10", headers=user_headers(1))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [ticket["id"] for ticket in body["items"]] == [ticket["id"] for ticket in user_one_tickets]
+    assert {ticket["userId"] for ticket in body["items"]} == {"1"}
+    assert body["nextCursor"] is None
 
 
 def test_user_cannot_get_other_user_ticket(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -396,12 +440,18 @@ def test_metrics_returns_prometheus_format() -> None:
 
 # ── 헬퍼 ──────────────────────────────────────────────────────
 
-def ticket_issue_request() -> dict:
+def ticket_issue_request(
+    *,
+    reservation_id: str = "reservation-1",
+    user_id: str = "1",
+    concert_id: str = "concert-1",
+    seat_id: str = "seat-A1",
+) -> dict:
     return {
-        "reservationId": "reservation-1",
-        "userId": "1",
-        "concertId": "concert-1",
-        "seatId": "seat-A1",
+        "reservationId": reservation_id,
+        "userId": user_id,
+        "concertId": concert_id,
+        "seatId": seat_id,
     }
 
 
@@ -436,6 +486,22 @@ def _mock_kafka_and_s3(monkeypatch: pytest.MonkeyPatch) -> None:
     app.dependency_overrides[get_kafka_producer] = lambda: FakeKafkaProducer()
     monkeypatch.setattr(ticket_service.s3, "upload_qr", lambda *args: None)
     monkeypatch.setattr(ticket_service.s3, "upload_pdf", lambda *args: None)
+
+
+def issue_tickets_for_user(monkeypatch: pytest.MonkeyPatch, user_id: str, count: int) -> list[dict]:
+    _mock_kafka_and_s3(monkeypatch)
+    tickets = []
+    for index in range(count):
+        tickets.append(client.post(
+            "/tickets/issue",
+            json=ticket_issue_request(
+                reservation_id=f"reservation-{user_id}-{index}",
+                user_id=user_id,
+                concert_id=f"concert-{index}",
+                seat_id=f"seat-{index}",
+            ),
+        ).json())
+    return tickets
 
 
 def assert_metric_labels(metrics: str, metric_name: str, **labels: str) -> None:

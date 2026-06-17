@@ -16,7 +16,7 @@ from app.metrics.events import TicketEventPublishRecorded
 from app.metrics.labels import TicketArtifact, TicketEventType, TicketSource
 from app.metrics.recorder import TicketTelemetryRecorder
 from app.models import ProcessedEvent, Ticket
-from app.schemas import TicketIssueRequest
+from app.schemas import TicketIssueRequest, TicketListResponse
 
 
 SessionFactory = Callable[[], Session]
@@ -107,10 +107,21 @@ def get_ticket(db: Session, ticket_id: int, user: UserContext) -> Ticket:
     return ticket
 
 
-def list_my_tickets(db: Session, user: UserContext) -> list[Ticket]:
-    return db.query(Ticket).filter(
-        Ticket.user_id == user.user_id
-    ).order_by(Ticket.id).all()
+def list_my_tickets(
+    db: Session,
+    user: UserContext,
+    *,
+    limit: int,
+    cursor: int | None = None,
+) -> TicketListResponse:
+    query = db.query(Ticket).filter(Ticket.user_id == user.user_id)
+    if cursor is not None:
+        query = query.filter(Ticket.id > cursor)
+
+    tickets = query.order_by(Ticket.id).limit(limit + 1).all()
+    items = tickets[:limit]
+    next_cursor = str(items[-1].id) if len(tickets) > limit and items else None
+    return TicketListResponse(items=items, nextCursor=next_cursor)
 
 
 async def handle_payment_approved(db: Session, payload: dict, kafka_producer: KafkaProducer) -> None:
