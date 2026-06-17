@@ -178,10 +178,38 @@ def test_list_my_tickets_records_query_and_response_trace_spans(monkeypatch: pyt
             },
         ),
         (
+            "ticket.list.query.build",
+            {
+                "ticket.list.cursor_present": False,
+            },
+        ),
+        (
+            "ticket.list.query.execute",
+            {
+                "ticket.list.limit_plus_one": 2,
+            },
+        ),
+        (
             "ticket.list.response",
             {
                 "ticket.list.item_count": 1,
                 "ticket.list.has_next_cursor": True,
+            },
+        ),
+    ]
+    assert trace.events == [
+        (
+            "ticket.list.service.enter",
+            {
+                "ticket.list.limit": 1,
+                "ticket.list.cursor_present": False,
+            },
+        ),
+        (
+            "ticket.list.query.returned",
+            {
+                "ticket.list.row_count": 2,
+                "ticket.list.limit_plus_one": 2,
             },
         ),
     ]
@@ -578,6 +606,7 @@ class FailingKafkaProducer:
 class RecordingTraceRecorder:
     def __init__(self) -> None:
         self.spans: list[tuple[str, dict[str, object]]] = []
+        self.events: list[tuple[str, dict[str, object]]] = []
 
     def span(self, name: str, attributes: dict[str, object] | None = None):
         self.spans.append((name, attributes or {}))
@@ -592,7 +621,7 @@ class RecordingTraceRecorder:
         return None
 
     def event(self, name: str, attributes: dict[str, object] | None = None) -> None:
-        return None
+        self.events.append((name, attributes or {}))
 
 
 @dataclass

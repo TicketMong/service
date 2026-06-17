@@ -117,6 +117,13 @@ def list_my_tickets(
     trace: TraceRecorder | None = None,
 ) -> TicketListResponse:
     recorder = trace or trace_recorder()
+    recorder.event(
+        "ticket.list.service.enter",
+        {
+            "ticket.list.limit": limit,
+            "ticket.list.cursor_present": cursor is not None,
+        },
+    )
     with recorder.span(
         "ticket.list.query",
         {
@@ -124,11 +131,33 @@ def list_my_tickets(
             "ticket.list.cursor_present": cursor is not None,
         },
     ):
-        query = db.query(Ticket).filter(Ticket.user_id == user.user_id)
-        if cursor is not None:
-            query = query.filter(Ticket.id > cursor)
+        with recorder.span(
+            "ticket.list.query.build",
+            {
+                "ticket.list.cursor_present": cursor is not None,
+            },
+        ):
+            query = db.query(Ticket).filter(Ticket.user_id == user.user_id)
+            if cursor is not None:
+                query = query.filter(Ticket.id > cursor)
 
-        tickets = query.order_by(Ticket.id).limit(limit + 1).all()
+            query = query.order_by(Ticket.id).limit(limit + 1)
+
+        with recorder.span(
+            "ticket.list.query.execute",
+            {
+                "ticket.list.limit_plus_one": limit + 1,
+            },
+        ):
+            tickets = query.all()
+
+        recorder.event(
+            "ticket.list.query.returned",
+            {
+                "ticket.list.row_count": len(tickets),
+                "ticket.list.limit_plus_one": limit + 1,
+            },
+        )
 
     items = tickets[:limit]
     next_cursor = str(items[-1].id) if len(tickets) > limit and items else None

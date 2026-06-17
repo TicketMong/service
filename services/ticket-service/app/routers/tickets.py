@@ -38,7 +38,16 @@ def list_my_tickets(
             "ticket.list.cursor_present": cursor is not None,
         },
     ):
-        return ticket_service.list_my_tickets(db, user, limit=limit, cursor=cursor, trace=recorder)
+        recorder.event("ticket.list.route.service_call.start")
+        response = ticket_service.list_my_tickets(db, user, limit=limit, cursor=cursor, trace=recorder)
+        recorder.event(
+            "ticket.list.route.service_call.end",
+            {
+                "ticket.list.item_count": len(response.items),
+                "ticket.list.has_next_cursor": response.nextCursor is not None,
+            },
+        )
+        return response
 
 
 # 티켓 상세 조회
