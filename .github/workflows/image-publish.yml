@@ -153,6 +153,20 @@ jobs:
       - name: ECR 로그인
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Trivy 스캔용 이미지 빌드
+        run: |
+          docker build \
+            --platform linux/amd64 \
+            -f services/${{ matrix.image }}/Dockerfile \
+            -t ${{ matrix.image }}:scan \
+            .
+      - name: Trivy CRITICAL 스캔 (ECR push 차단)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ matrix.image }}:scan
+          format: table
+          severity: CRITICAL
+          exit-code: 1
       - name: Docker 이미지 빌드
         shell: bash
         working-directory: ${{ github.workspace }}
