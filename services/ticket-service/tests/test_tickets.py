@@ -11,12 +11,15 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.auth import UserContext
+from app import auth as auth_module
+from app import database as database_module
 from app.consumers import kafka_consumer as kafka_consumer_module
 from app.consumers.kafka_consumer import consume_events
 from app.database import Base, get_db
 from app.kafka import get_kafka_producer
 from app.main import app
 import app.main as main_module
+from app.routers import tickets as tickets_router_module
 from app.services import ticket_service
 
 
@@ -190,6 +193,10 @@ def test_list_my_tickets_records_query_and_response_trace_spans(monkeypatch: pyt
             },
         ),
         (
+            "ticket.list.query.pool_checkout",
+            {},
+        ),
+        (
             "ticket.list.response",
             {
                 "ticket.list.item_count": 1,
@@ -206,6 +213,10 @@ def test_list_my_tickets_records_query_and_response_trace_spans(monkeypatch: pyt
             },
         ),
         (
+            "ticket.list.query.pool_checkout.acquired",
+            {},
+        ),
+        (
             "ticket.list.query.returned",
             {
                 "ticket.list.row_count": 2,
@@ -213,6 +224,88 @@ def test_list_my_tickets_records_query_and_response_trace_spans(monkeypatch: pyt
             },
         ),
     ]
+
+
+def test_get_user_context_records_dependency_trace_span(monkeypatch: pytest.MonkeyPatch) -> None:
+    trace = RecordingTraceRecorder()
+    monkeypatch.setattr(auth_module, "trace_recorder", lambda: trace)
+
+    user = auth_module.get_user_context(x_user_id="user-1", x_user_role="user")
+
+    assert user == UserContext(user_id="user-1", role="USER")
+    assert trace.spans == [
+        (
+            "ticket.dependency.user_context",
+            {
+                "ticket.auth.user_id_present": True,
+                "ticket.auth.role_present": True,
+            },
+        ),
+    ]
+
+
+def test_get_db_records_session_create_and_close_trace_spans(monkeypatch: pytest.MonkeyPatch) -> None:
+    trace = RecordingTraceRecorder()
+    session = FakeSession()
+    monkeypatch.setattr(database_module, "trace_recorder", lambda: trace)
+    monkeypatch.setattr(database_module, "SessionLocal", lambda: session)
+
+    generator = database_module.get_db()
+    db = next(generator)
+    generator.close()
+
+    assert db is session
+    assert session.closed is True
+    assert trace.spans == [
+        ("ticket.dependency.db.session_create", {}),
+        ("ticket.dependency.db.session_close", {}),
+    ]
+
+
+def test_list_my_tickets_async_experiment_records_route_threadpool_trace(monkeypatch: pytest.MonkeyPatch) -> None:
+    issued = issue_tickets_for_user(monkeypatch, "1", 2)
+    trace = RecordingTraceRecorder()
+    monkeypatch.setattr(tickets_router_module, "trace_recorder", lambda: trace)
+    db = TestingSessionLocal()
+
+    try:
+        response = asyncio.run(
+            tickets_router_module.list_my_tickets_async_experiment(
+                limit=1,
+                cursor=None,
+                db=db,
+                user=UserContext(user_id="1", role="USER"),
+            )
+        )
+    finally:
+        db.close()
+
+    assert response.items[0].id == issued[0]["id"]
+    assert response.nextCursor == str(issued[0]["id"])
+    assert trace.spans[:2] == [
+        (
+            "ticket.list.route.async_experiment",
+            {
+                "ticket.list.limit": 1,
+                "ticket.list.cursor_present": False,
+            },
+        ),
+        (
+            "ticket.list.query",
+            {
+                "ticket.list.limit": 1,
+                "ticket.list.cursor_present": False,
+            },
+        ),
+    ]
+    assert trace.events[0] == ("ticket.list.route.threadpool_call.start", {})
+    assert trace.events[-1] == (
+        "ticket.list.route.threadpool_call.end",
+        {
+            "ticket.list.item_count": 1,
+            "ticket.list.has_next_cursor": True,
+        },
+    )
 
 
 def test_user_cannot_get_other_user_ticket(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -601,6 +694,14 @@ class FailingKafkaProducer:
         headers: list[tuple[str, bytes]] | None = None,
     ) -> None:
         raise RuntimeError("kafka unavailable")
+
+
+class FakeSession:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class RecordingTraceRecorder:

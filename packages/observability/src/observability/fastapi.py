@@ -11,7 +11,7 @@ from starlette.responses import Response
 from middleware import get_current_client_action_id
 from middleware import get_current_request_id as get_runtime_request_id
 from observability.config import ObservabilityConfig
-from observability.tracing import current_trace_context, set_current_span_attributes
+from observability.tracing import current_trace_context, set_current_span_attributes, trace_recorder
 
 
 REQUEST_ID_HEADER = "X-Request-Id"
@@ -59,7 +59,23 @@ def create_request_log_middleware(config: ObservabilityConfig) -> RequestMiddlew
         status_code = 500
 
         try:
+            recorder = trace_recorder()
+            recorder.event(
+                "http.request.middleware.call_next.start",
+                {
+                    "http.method": request.method,
+                    "http.middleware": "request_observability",
+                },
+            )
             response = await call_next(request)
+            recorder.event(
+                "http.request.middleware.call_next.end",
+                {
+                    "http.method": request.method,
+                    "http.middleware": "request_observability",
+                    "http.status_code": response.status_code,
+                },
+            )
             status_code = response.status_code
             response.headers[REQUEST_ID_HEADER] = request_id
             return response

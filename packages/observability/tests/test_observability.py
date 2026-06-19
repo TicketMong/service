@@ -639,6 +639,44 @@ def test_instrument_sqlalchemy_engine_registers_sqlalchemy_instrumentation(monke
     assert instrumented_engines == [engine]
 
 
+def test_instrument_sqlalchemy_pool_events_records_checkout_and_checkin(monkeypatch) -> None:
+    recorder = RecordingTraceRecorder()
+    listeners: list[tuple[object, str, object]] = []
+
+    class FakePool:
+        def status(self) -> str:
+            return "Pool size: 5 Connections in pool: 1"
+
+    class FakeEngine:
+        pool = FakePool()
+
+    def fake_listen(engine: object, event_name: str, listener: object) -> None:
+        listeners.append((engine, event_name, listener))
+
+    fake_sqlalchemy = types.SimpleNamespace(event=types.SimpleNamespace(listen=fake_listen))
+    monkeypatch.setattr(database_module, "_sqlalchemy_pool_event_engine_ids", set())
+    monkeypatch.setattr(tracing_module, "trace_recorder", lambda: recorder)
+    monkeypatch.setitem(sys.modules, "sqlalchemy", fake_sqlalchemy)
+    engine = FakeEngine()
+
+    database_module.instrument_sqlalchemy_pool_events(engine)
+    checkout_listener = listeners[0][2]
+    checkin_listener = listeners[1][2]
+    checkout_listener(None, None, None)
+    checkin_listener(None, None)
+
+    assert listeners[:2] == [
+        (engine, "checkout", checkout_listener),
+        (engine, "checkin", checkin_listener),
+    ]
+    assert [event[0] for event in recorder.events] == [
+        "sqlalchemy.pool.checkout",
+        "sqlalchemy.pool.checkin",
+    ]
+    assert recorder.events[0][1]["db.system"] == "sqlalchemy"
+    assert isinstance(recorder.events[0][1]["db.pool.status"], str)
+
+
 def test_trace_recorder_noops_on_invalid_current_span(monkeypatch) -> None:
     span = FakeSpan(is_valid=False)
     monkeypatch.setattr(tracing_module.trace, "get_current_span", lambda: span)
@@ -737,6 +775,40 @@ def test_request_observability_emits_single_line_json_log(caplog, monkeypatch) -
     assert log["log.policy"] == "sample"
     assert span_attributes["request_id"] == "11111111-1111-4111-8111-111111111111"
     assert span_attributes["http.route"] == "/items/{item_id}"
+
+
+def test_request_observability_records_call_next_boundary_events(caplog, monkeypatch) -> None:
+    recorder = RecordingTraceRecorder()
+    monkeypatch.setattr(fastapi_module, "trace_recorder", lambda: recorder)
+    app = _observed_app(ObservabilityConfig(service_name="test-service"))
+
+    @app.get("/items")
+    def get_items() -> dict[str, list[str]]:
+        return {"items": []}
+
+    caplog.set_level(logging.INFO)
+    client = TestClient(app)
+
+    response = client.get("/items")
+
+    assert response.status_code == 200
+    assert recorder.events == [
+        (
+            "http.request.middleware.call_next.start",
+            {
+                "http.method": "GET",
+                "http.middleware": "request_observability",
+            },
+        ),
+        (
+            "http.request.middleware.call_next.end",
+            {
+                "http.method": "GET",
+                "http.middleware": "request_observability",
+                "http.status_code": 200,
+            },
+        ),
+    ]
 
 
 def test_request_observability_logs_failed_request_fields(caplog) -> None:
@@ -985,3 +1057,11 @@ class FakeSpan:
 
     def add_event(self, name: str, attributes: dict[str, object] | None = None) -> None:
         self.events.append((name, attributes))
+
+
+class RecordingTraceRecorder:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, object]]] = []
+
+    def event(self, name: str, attributes: dict[str, object] | None = None) -> None:
+        self.events.append((name, attributes or {}))

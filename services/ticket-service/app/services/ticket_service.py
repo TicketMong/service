@@ -149,6 +149,9 @@ def list_my_tickets(
                 "ticket.list.limit_plus_one": limit + 1,
             },
         ):
+            with recorder.span("ticket.list.query.pool_checkout"):
+                db.connection()
+                recorder.event("ticket.list.query.pool_checkout.acquired")
             tickets = query.all()
 
         recorder.event(
