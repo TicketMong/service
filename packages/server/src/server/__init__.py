@@ -6,6 +6,10 @@ from server.operational import (
     required_settings_readiness_check,
     sqlalchemy_readiness_check,
 )
+from server.sqlalchemy import (
+    SQLAlchemyPoolSettings,
+    sqlalchemy_engine_options_from_env,
+)
 from server.middleware import (
     CLIENT_ACTION_ID_HEADER,
     RequestContext,
@@ -41,6 +45,7 @@ __all__ = [
     "RequestContextMiddleware",
     "ResponseHeadersMiddleware",
     "RuntimeRecoveryMiddleware",
+    "SQLAlchemyPoolSettings",
     "ObservabilityConfig",
     "ReadinessCheck",
     "configure_process_logging",
@@ -59,5 +64,6 @@ __all__ = [
     "request_context_middleware_options",
     "request_id_middleware_options",
     "required_settings_readiness_check",
+    "sqlalchemy_engine_options_from_env",
     "sqlalchemy_readiness_check",
 ]

@@ -11,9 +11,10 @@ from observability.config import (
     DEFAULT_FASTAPI_TRACE_EXCLUDED_URLS,
     OBSERVABILITY_ENV_KEYS,
     ObservabilityConfig,
+    ProfilingConfig,
     observability_config_from_env,
 )
-from observability.database import instrument_motor_client, instrument_sqlalchemy_engine
+from observability.database import instrument_motor_client, instrument_sqlalchemy_engine, instrument_sqlalchemy_pool_events
 from observability.exceptions import ErrorRecordingMiddleware, record_exception
 from observability.fastapi import (
     REQUEST_ID_HEADER,
@@ -35,6 +36,7 @@ from observability.observation import (
     ExceptionCapture,
     SpanTreatment,
 )
+from observability.profiling import configure_process_profiling
 from observability.tracing import (
     CallsiteSpanProcessor,
     NoopTraceRecorder,
@@ -60,6 +62,7 @@ __all__ = [
     "Callsite",
     "CallsiteSpanProcessor",
     "ObservabilityConfig",
+    "ProfilingConfig",
     "NoopTraceRecorder",
     "TraceContext",
     "CLIENT_REJECTION_OBSERVATION",
@@ -69,6 +72,7 @@ __all__ = [
     "ErrorKind",
     "ErrorObservation",
     "configure_process_logging",
+    "configure_process_profiling",
     "configure_process_tracing",
     "configure_structured_logging",
     "configure_tracing",
@@ -82,6 +86,7 @@ __all__ = [
     "instrument_motor_client",
     "instrument_fastapi_app",
     "instrument_sqlalchemy_engine",
+    "instrument_sqlalchemy_pool_events",
     "observability_config_from_env",
     "list_callsites",
     "put_callsite",

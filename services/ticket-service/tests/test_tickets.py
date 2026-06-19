@@ -10,12 +10,16 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.auth import UserContext
+from app import auth as auth_module
+from app import database as database_module
 from app.consumers import kafka_consumer as kafka_consumer_module
 from app.consumers.kafka_consumer import consume_events
 from app.database import Base, get_db
 from app.kafka import get_kafka_producer
 from app.main import app
 import app.main as main_module
+from app.routers import tickets as tickets_router_module
 from app.services import ticket_service
 
 
@@ -104,7 +108,204 @@ def test_user_can_list_my_tickets(monkeypatch: pytest.MonkeyPatch) -> None:
     response = client.get("/tickets/me", headers=user_headers(1))
 
     assert response.status_code == 200
-    assert response.json()[0]["id"] == issued["id"]
+    body = response.json()
+    assert body["items"][0]["id"] == issued["id"]
+    assert body["nextCursor"] is None
+
+
+def test_list_my_tickets_applies_limit_and_returns_next_cursor(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_kafka_and_s3(monkeypatch)
+
+    issued = issue_tickets_for_user(monkeypatch, "1", 3)
+    response = client.get("/tickets/me?limit=2", headers=user_headers(1))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [ticket["id"] for ticket in body["items"]] == [issued[0]["id"], issued[1]["id"]]
+    assert body["nextCursor"] == str(issued[1]["id"])
+
+
+def test_list_my_tickets_uses_cursor_for_next_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_kafka_and_s3(monkeypatch)
+
+    issued = issue_tickets_for_user(monkeypatch, "1", 3)
+    first_page = client.get("/tickets/me?limit=2", headers=user_headers(1)).json()
+    second_page = client.get(
+        f"/tickets/me?limit=2&cursor={first_page['nextCursor']}",
+        headers=user_headers(1),
+    )
+
+    assert second_page.status_code == 200
+    body = second_page.json()
+    assert [ticket["id"] for ticket in body["items"]] == [issued[2]["id"]]
+    assert body["nextCursor"] is None
+
+
+def test_list_my_tickets_does_not_mix_other_user_tickets(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_kafka_and_s3(monkeypatch)
+
+    user_one_tickets = issue_tickets_for_user(monkeypatch, "1", 2)
+    issue_tickets_for_user(monkeypatch, "99", 2)
+    response = client.get("/tickets/me?limit=10", headers=user_headers(1))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [ticket["id"] for ticket in body["items"]] == [ticket["id"] for ticket in user_one_tickets]
+    assert {ticket["userId"] for ticket in body["items"]} == {"1"}
+    assert body["nextCursor"] is None
+
+
+def test_list_my_tickets_records_query_and_response_trace_spans(monkeypatch: pytest.MonkeyPatch) -> None:
+    issued = issue_tickets_for_user(monkeypatch, "1", 2)
+    trace = RecordingTraceRecorder()
+    db = TestingSessionLocal()
+
+    try:
+        response = ticket_service.list_my_tickets(
+            db,
+            UserContext(user_id="1", role="USER"),
+            limit=1,
+            trace=trace,
+        )
+    finally:
+        db.close()
+
+    assert response.items[0].id == issued[0]["id"]
+    assert response.nextCursor == str(issued[0]["id"])
+    assert trace.spans == [
+        (
+            "ticket.list.query",
+            {
+                "ticket.list.limit": 1,
+                "ticket.list.cursor_present": False,
+            },
+        ),
+        (
+            "ticket.list.query.build",
+            {
+                "ticket.list.cursor_present": False,
+            },
+        ),
+        (
+            "ticket.list.query.execute",
+            {
+                "ticket.list.limit_plus_one": 2,
+            },
+        ),
+        (
+            "ticket.list.query.pool_checkout",
+            {},
+        ),
+        (
+            "ticket.list.response",
+            {
+                "ticket.list.item_count": 1,
+                "ticket.list.has_next_cursor": True,
+            },
+        ),
+    ]
+    assert trace.events == [
+        (
+            "ticket.list.service.enter",
+            {
+                "ticket.list.limit": 1,
+                "ticket.list.cursor_present": False,
+            },
+        ),
+        (
+            "ticket.list.query.pool_checkout.acquired",
+            {},
+        ),
+        (
+            "ticket.list.query.returned",
+            {
+                "ticket.list.row_count": 2,
+                "ticket.list.limit_plus_one": 2,
+            },
+        ),
+    ]
+
+
+def test_get_user_context_records_dependency_trace_span(monkeypatch: pytest.MonkeyPatch) -> None:
+    trace = RecordingTraceRecorder()
+    monkeypatch.setattr(auth_module, "trace_recorder", lambda: trace)
+
+    user = auth_module.get_user_context(x_user_id="user-1", x_user_role="user")
+
+    assert user == UserContext(user_id="user-1", role="USER")
+    assert trace.spans == [
+        (
+            "ticket.dependency.user_context",
+            {
+                "ticket.auth.user_id_present": True,
+                "ticket.auth.role_present": True,
+            },
+        ),
+    ]
+
+
+def test_get_db_records_session_create_and_close_trace_spans(monkeypatch: pytest.MonkeyPatch) -> None:
+    trace = RecordingTraceRecorder()
+    session = FakeSession()
+    monkeypatch.setattr(database_module, "trace_recorder", lambda: trace)
+    monkeypatch.setattr(database_module, "SessionLocal", lambda: session)
+
+    generator = database_module.get_db()
+    db = next(generator)
+    generator.close()
+
+    assert db is session
+    assert session.closed is True
+    assert trace.spans == [
+        ("ticket.dependency.db.session_create", {}),
+        ("ticket.dependency.db.session_close", {}),
+    ]
+
+
+def test_list_my_tickets_async_experiment_records_route_threadpool_trace(monkeypatch: pytest.MonkeyPatch) -> None:
+    issued = issue_tickets_for_user(monkeypatch, "1", 2)
+    trace = RecordingTraceRecorder()
+    monkeypatch.setattr(tickets_router_module, "trace_recorder", lambda: trace)
+    db = TestingSessionLocal()
+
+    try:
+        response = asyncio.run(
+            tickets_router_module.list_my_tickets_async_experiment(
+                limit=1,
+                cursor=None,
+                db=db,
+                user=UserContext(user_id="1", role="USER"),
+            )
+        )
+    finally:
+        db.close()
+
+    assert response.items[0].id == issued[0]["id"]
+    assert response.nextCursor == str(issued[0]["id"])
+    assert trace.spans[:2] == [
+        (
+            "ticket.list.route.async_experiment",
+            {
+                "ticket.list.limit": 1,
+                "ticket.list.cursor_present": False,
+            },
+        ),
+        (
+            "ticket.list.query",
+            {
+                "ticket.list.limit": 1,
+                "ticket.list.cursor_present": False,
+            },
+        ),
+    ]
+    assert trace.events[0] == ("ticket.list.route.threadpool_call.start", {})
+    assert trace.events[-1] == (
+        "ticket.list.route.threadpool_call.end",
+        {
+            "ticket.list.item_count": 1,
+            "ticket.list.has_next_cursor": True,
+        },
+    )
 
 
 def test_user_cannot_get_other_user_ticket(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -396,12 +597,18 @@ def test_metrics_returns_prometheus_format() -> None:
 
 # ── 헬퍼 ──────────────────────────────────────────────────────
 
-def ticket_issue_request() -> dict:
+def ticket_issue_request(
+    *,
+    reservation_id: str = "reservation-1",
+    user_id: str = "1",
+    concert_id: str = "concert-1",
+    seat_id: str = "seat-A1",
+) -> dict:
     return {
-        "reservationId": "reservation-1",
-        "userId": "1",
-        "concertId": "concert-1",
-        "seatId": "seat-A1",
+        "reservationId": reservation_id,
+        "userId": user_id,
+        "concertId": concert_id,
+        "seatId": seat_id,
     }
 
 
@@ -438,6 +645,22 @@ def _mock_kafka_and_s3(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ticket_service.s3, "upload_pdf", lambda *args: None)
 
 
+def issue_tickets_for_user(monkeypatch: pytest.MonkeyPatch, user_id: str, count: int) -> list[dict]:
+    _mock_kafka_and_s3(monkeypatch)
+    tickets = []
+    for index in range(count):
+        tickets.append(client.post(
+            "/tickets/issue",
+            json=ticket_issue_request(
+                reservation_id=f"reservation-{user_id}-{index}",
+                user_id=user_id,
+                concert_id=f"concert-{index}",
+                seat_id=f"seat-{index}",
+            ),
+        ).json())
+    return tickets
+
+
 def assert_metric_labels(metrics: str, metric_name: str, **labels: str) -> None:
     label_fragments = [f'{key}="{value}"' for key, value in {"service_name": "ticket-service", **labels}.items()]
     assert any(line.startswith(metric_name + "{") and all(fragment in line for fragment in label_fragments) for line in metrics.splitlines())
@@ -471,6 +694,35 @@ class FailingKafkaProducer:
         headers: list[tuple[str, bytes]] | None = None,
     ) -> None:
         raise RuntimeError("kafka unavailable")
+
+
+class FakeSession:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class RecordingTraceRecorder:
+    def __init__(self) -> None:
+        self.spans: list[tuple[str, dict[str, object]]] = []
+        self.events: list[tuple[str, dict[str, object]]] = []
+
+    def span(self, name: str, attributes: dict[str, object] | None = None):
+        self.spans.append((name, attributes or {}))
+
+        @contextmanager
+        def child_span() -> Generator[None, None, None]:
+            yield
+
+        return child_span()
+
+    def attribute(self, key: str, value: object) -> None:
+        return None
+
+    def event(self, name: str, attributes: dict[str, object] | None = None) -> None:
+        self.events.append((name, attributes or {}))
 
 
 @dataclass

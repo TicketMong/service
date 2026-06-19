@@ -33,9 +33,11 @@ from observability import (
     HttpError,
     ObservabilityConfig,
     NoopTraceRecorder,
+    ProfilingConfig,
     TraceContext,
     capture_current_trace_context,
     configure_process_logging,
+    configure_process_profiling,
     configure_process_tracing,
     create_request_log_middleware,
     clear_callsite_cache,
@@ -48,6 +50,7 @@ from observability import (
     start_trace_span,
     trace_recorder,
 )
+from observability import profiling as profiling_module
 from observability import tracing as tracing_module
 from observability.tracing import _otlp_trace_export_enabled
 
@@ -75,6 +78,10 @@ def test_observability_config_from_env_maps_explicit_otel_settings() -> None:
         otlp_trace_exporter_endpoint="http://collector:4318/v1/traces",
         fastapi_trace_excluded_urls=DEFAULT_FASTAPI_TRACE_EXCLUDED_URLS,
         callsite_module_prefixes=("app", "worker", "domain"),
+        profiling=ProfilingConfig(
+            application_name="test-service",
+            tags={"service": "test-service", "environment": "staging", "version": "1.2.3"},
+        ),
     )
     assert set(OBSERVABILITY_ENV_KEYS) == {
         "SERVICE_VERSION",
@@ -85,6 +92,17 @@ def test_observability_config_from_env_maps_explicit_otel_settings() -> None:
         "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
         "OTEL_PYTHON_FASTAPI_EXCLUDED_URLS",
         CALLSITE_MODULE_PREFIXES_ENV,
+        "PYROSCOPE_ENABLED",
+        "PYROSCOPE_SERVER_ADDRESS",
+        "PYROSCOPE_APPLICATION_NAME",
+        "PYROSCOPE_SAMPLE_RATE",
+        "PYROSCOPE_SPAN_PROFILES_ENABLED",
+        "PYROSCOPE_ONCPU",
+        "PYROSCOPE_GIL_ONLY",
+        "PYROSCOPE_TAGS",
+        "PYROSCOPE_BASIC_AUTH_USERNAME",
+        "PYROSCOPE_BASIC_AUTH_PASSWORD",
+        "PYROSCOPE_TENANT_ID",
     }
 
 
@@ -120,6 +138,120 @@ def test_observability_config_reads_fastapi_trace_exclusions_from_env() -> None:
     )
 
     assert config.fastapi_trace_excluded_urls == ("/livez", "/readyz", "/internal/metrics")
+
+
+def test_observability_config_reads_pyroscope_settings_from_env() -> None:
+    config = observability_config_from_env(
+        "auth-service",
+        env={
+            "SERVICE_VERSION": "abc123",
+            "SERVICE_ENVIRONMENT": "aws-dev",
+            "PYROSCOPE_ENABLED": "true",
+            "PYROSCOPE_SERVER_ADDRESS": "http://pyroscope:4040",
+            "PYROSCOPE_APPLICATION_NAME": "medikong.auth",
+            "PYROSCOPE_SAMPLE_RATE": "50",
+            "PYROSCOPE_SPAN_PROFILES_ENABLED": "true",
+            "PYROSCOPE_ONCPU": "false",
+            "PYROSCOPE_GIL_ONLY": "false",
+            "PYROSCOPE_TAGS": "scenario=reservation-journey-load-test, run_id=run-001",
+            "PYROSCOPE_BASIC_AUTH_USERNAME": "profiles-user",
+            "PYROSCOPE_BASIC_AUTH_PASSWORD": "profiles-password",
+            "PYROSCOPE_TENANT_ID": "tenant-a",
+        },
+    )
+
+    assert config.profiling == ProfilingConfig(
+        enabled=True,
+        server_address="http://pyroscope:4040",
+        application_name="medikong.auth",
+        sample_rate=50,
+        span_profiles_enabled=True,
+        oncpu=False,
+        gil_only=False,
+        tags={
+            "service": "auth-service",
+            "environment": "aws-dev",
+            "version": "abc123",
+            "scenario": "reservation-journey-load-test",
+            "run_id": "run-001",
+        },
+        basic_auth_username="profiles-user",
+        basic_auth_password="profiles-password",
+        tenant_id="tenant-a",
+    )
+
+
+@pytest.mark.parametrize("tag_key", ["user_id", "reservation_id", "payment_id", "ticket_id", "customer_id"])
+def test_observability_config_rejects_high_cardinality_pyroscope_tags(tag_key: str) -> None:
+    with pytest.raises(ValueError, match="forbidden high-cardinality tag key"):
+        observability_config_from_env(
+            "auth-service",
+            env={"PYROSCOPE_TAGS": f"{tag_key}=123"},
+        )
+
+
+def test_configure_process_profiling_skips_disabled_config(monkeypatch) -> None:
+    monkeypatch.setattr(profiling_module, "_profiling_configured", False)
+
+    configured = configure_process_profiling(
+        ObservabilityConfig(
+            service_name="auth-service",
+            profiling=ProfilingConfig(enabled=False, server_address="http://pyroscope:4040"),
+        )
+    )
+
+    assert not configured
+
+
+def test_configure_process_profiling_configures_pyroscope_once(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+    fake_pyroscope_module = types.SimpleNamespace(configure=lambda **kwargs: calls.append(kwargs))
+    monkeypatch.setitem(sys.modules, "pyroscope", fake_pyroscope_module)
+    monkeypatch.setattr(profiling_module, "_profiling_configured", False)
+
+    config = ObservabilityConfig(
+        service_name="auth-service",
+        profiling=ProfilingConfig(
+            enabled=True,
+            server_address="http://pyroscope:4040",
+            application_name="medikong.auth",
+            sample_rate=50,
+            oncpu=True,
+            gil_only=True,
+            tags={"service": "auth-service", "scenario": "reservation-journey-load-test"},
+            basic_auth_username="profiles-user",
+            basic_auth_password="profiles-password",
+            tenant_id="tenant-a",
+        ),
+    )
+
+    assert configure_process_profiling(config)
+    assert not configure_process_profiling(config)
+    assert calls == [
+        {
+            "application_name": "medikong.auth",
+            "server_address": "http://pyroscope:4040",
+            "sample_rate": 50,
+            "oncpu": True,
+            "gil_only": True,
+            "tags": {"service": "auth-service", "scenario": "reservation-journey-load-test"},
+            "basic_auth_username": "profiles-user",
+            "basic_auth_password": "profiles-password",
+            "tenant_id": "tenant-a",
+        }
+    ]
+
+
+def test_configure_process_profiling_requires_server_address(monkeypatch) -> None:
+    monkeypatch.setattr(profiling_module, "_profiling_configured", False)
+
+    with pytest.raises(ValueError, match="PYROSCOPE_SERVER_ADDRESS is required"):
+        configure_process_profiling(
+            ObservabilityConfig(
+                service_name="auth-service",
+                profiling=ProfilingConfig(enabled=True),
+            )
+        )
 
 
 def test_instrument_fastapi_app_passes_configured_excluded_urls(monkeypatch) -> None:
@@ -202,6 +334,105 @@ def test_configure_tracing_passes_explicit_otlp_trace_endpoint(monkeypatch) -> N
     assert providers
     assert isinstance(providers[0].span_processors[0], CallsiteSpanProcessor)
     assert isinstance(providers[0].span_processors[1], FakeBatchSpanProcessor)
+
+
+def test_configure_tracing_skips_pyroscope_span_processor_when_disabled(monkeypatch) -> None:
+    providers: list[object] = []
+    span_processors: list[object] = []
+
+    class FakeTracerProvider:
+        def __init__(self, *, resource: object) -> None:
+            self.resource = resource
+            self.span_processors = span_processors
+
+        def add_span_processor(self, processor: object) -> None:
+            self.span_processors.append(processor)
+
+    def fake_pyroscope_span_processor() -> object:
+        raise AssertionError("pyroscope span processor should not be created")
+
+    monkeypatch.setattr(tracing_module, "_tracing_configured", False)
+    monkeypatch.setattr(tracing_module, "TracerProvider", FakeTracerProvider)
+    monkeypatch.setattr(tracing_module, "_pyroscope_span_processor", fake_pyroscope_span_processor)
+    monkeypatch.setattr(tracing_module.trace, "set_tracer_provider", providers.append)
+
+    configure_process_tracing(
+        ObservabilityConfig(
+            service_name="test-service",
+            profiling=ProfilingConfig(enabled=True, span_profiles_enabled=False),
+        )
+    )
+
+    assert providers
+    assert len(span_processors) == 1
+    assert isinstance(span_processors[0], CallsiteSpanProcessor)
+
+
+def test_configure_tracing_adds_pyroscope_span_processor_when_enabled(monkeypatch) -> None:
+    providers: list[object] = []
+    pyroscope_processor = object()
+
+    class FakeTracerProvider:
+        def __init__(self, *, resource: object) -> None:
+            self.resource = resource
+            self.span_processors: list[object] = []
+
+        def add_span_processor(self, processor: object) -> None:
+            self.span_processors.append(processor)
+
+    monkeypatch.setattr(tracing_module, "_tracing_configured", False)
+    monkeypatch.setattr(tracing_module, "TracerProvider", FakeTracerProvider)
+    monkeypatch.setattr(tracing_module, "_pyroscope_span_processor", lambda: pyroscope_processor)
+    monkeypatch.setattr(tracing_module.trace, "set_tracer_provider", providers.append)
+
+    configure_process_tracing(
+        ObservabilityConfig(
+            service_name="test-service",
+            profiling=ProfilingConfig(enabled=True, span_profiles_enabled=True),
+        )
+    )
+    configure_process_tracing(
+        ObservabilityConfig(
+            service_name="test-service",
+            profiling=ProfilingConfig(enabled=True, span_profiles_enabled=True),
+        )
+    )
+
+    assert providers
+    assert providers[0].span_processors[1] is pyroscope_processor
+    assert len(providers[0].span_processors) == 2
+    assert len(providers) == 1
+
+
+def test_configure_tracing_skips_pyroscope_span_processor_when_profiling_off(monkeypatch) -> None:
+    providers: list[object] = []
+
+    class FakeTracerProvider:
+        def __init__(self, *, resource: object) -> None:
+            self.resource = resource
+            self.span_processors: list[object] = []
+
+        def add_span_processor(self, processor: object) -> None:
+            self.span_processors.append(processor)
+
+    def fake_pyroscope_span_processor() -> object:
+        raise AssertionError("pyroscope span processor should not be created")
+
+    monkeypatch.setattr(tracing_module, "_tracing_configured", False)
+    monkeypatch.setattr(tracing_module, "TracerProvider", FakeTracerProvider)
+    monkeypatch.setattr(tracing_module, "_pyroscope_span_processor", fake_pyroscope_span_processor)
+    monkeypatch.setattr(tracing_module.trace, "set_tracer_provider", providers.append)
+
+    configure_process_tracing(
+        ObservabilityConfig(
+            service_name="test-service",
+            profiling=ProfilingConfig(enabled=False, span_profiles_enabled=True),
+        )
+    )
+
+    assert providers
+    assert len(providers[0].span_processors) == 1
+    assert isinstance(providers[0].span_processors[0], CallsiteSpanProcessor)
 
 
 def test_configure_tracing_skips_unsupported_trace_exporter(monkeypatch) -> None:
@@ -408,6 +639,44 @@ def test_instrument_sqlalchemy_engine_registers_sqlalchemy_instrumentation(monke
     assert instrumented_engines == [engine]
 
 
+def test_instrument_sqlalchemy_pool_events_records_checkout_and_checkin(monkeypatch) -> None:
+    recorder = RecordingTraceRecorder()
+    listeners: list[tuple[object, str, object]] = []
+
+    class FakePool:
+        def status(self) -> str:
+            return "Pool size: 5 Connections in pool: 1"
+
+    class FakeEngine:
+        pool = FakePool()
+
+    def fake_listen(engine: object, event_name: str, listener: object) -> None:
+        listeners.append((engine, event_name, listener))
+
+    fake_sqlalchemy = types.SimpleNamespace(event=types.SimpleNamespace(listen=fake_listen))
+    monkeypatch.setattr(database_module, "_sqlalchemy_pool_event_engine_ids", set())
+    monkeypatch.setattr(tracing_module, "trace_recorder", lambda: recorder)
+    monkeypatch.setitem(sys.modules, "sqlalchemy", fake_sqlalchemy)
+    engine = FakeEngine()
+
+    database_module.instrument_sqlalchemy_pool_events(engine)
+    checkout_listener = listeners[0][2]
+    checkin_listener = listeners[1][2]
+    checkout_listener(None, None, None)
+    checkin_listener(None, None)
+
+    assert listeners[:2] == [
+        (engine, "checkout", checkout_listener),
+        (engine, "checkin", checkin_listener),
+    ]
+    assert [event[0] for event in recorder.events] == [
+        "sqlalchemy.pool.checkout",
+        "sqlalchemy.pool.checkin",
+    ]
+    assert recorder.events[0][1]["db.system"] == "sqlalchemy"
+    assert isinstance(recorder.events[0][1]["db.pool.status"], str)
+
+
 def test_trace_recorder_noops_on_invalid_current_span(monkeypatch) -> None:
     span = FakeSpan(is_valid=False)
     monkeypatch.setattr(tracing_module.trace, "get_current_span", lambda: span)
@@ -506,6 +775,40 @@ def test_request_observability_emits_single_line_json_log(caplog, monkeypatch) -
     assert log["log.policy"] == "sample"
     assert span_attributes["request_id"] == "11111111-1111-4111-8111-111111111111"
     assert span_attributes["http.route"] == "/items/{item_id}"
+
+
+def test_request_observability_records_call_next_boundary_events(caplog, monkeypatch) -> None:
+    recorder = RecordingTraceRecorder()
+    monkeypatch.setattr(fastapi_module, "trace_recorder", lambda: recorder)
+    app = _observed_app(ObservabilityConfig(service_name="test-service"))
+
+    @app.get("/items")
+    def get_items() -> dict[str, list[str]]:
+        return {"items": []}
+
+    caplog.set_level(logging.INFO)
+    client = TestClient(app)
+
+    response = client.get("/items")
+
+    assert response.status_code == 200
+    assert recorder.events == [
+        (
+            "http.request.middleware.call_next.start",
+            {
+                "http.method": "GET",
+                "http.middleware": "request_observability",
+            },
+        ),
+        (
+            "http.request.middleware.call_next.end",
+            {
+                "http.method": "GET",
+                "http.middleware": "request_observability",
+                "http.status_code": 200,
+            },
+        ),
+    ]
 
 
 def test_request_observability_logs_failed_request_fields(caplog) -> None:
@@ -754,3 +1057,11 @@ class FakeSpan:
 
     def add_event(self, name: str, attributes: dict[str, object] | None = None) -> None:
         self.events.append((name, attributes))
+
+
+class RecordingTraceRecorder:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, object]]] = []
+
+    def event(self, name: str, attributes: dict[str, object] | None = None) -> None:
+        self.events.append((name, attributes or {}))

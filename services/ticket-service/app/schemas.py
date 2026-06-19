@@ -22,3 +22,8 @@ class TicketResponse(BaseModel):
     qrUrl: str | None
     pdfUrl: str | None
     issuedAt: datetime
+
+
+class TicketListResponse(BaseModel):
+    items: list[TicketResponse]
+    nextCursor: str | None = None

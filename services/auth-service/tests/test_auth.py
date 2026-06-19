@@ -26,6 +26,56 @@ def test_lifespan_disposes_engine(monkeypatch: MonkeyPatch) -> None:
     assert calls == ["dispose"]
 
 
+def test_signup_creates_customer_and_issues_tokens() -> None:
+    response = client.post(
+        "/auth/signup",
+        json={
+            "email": "New.Customer@example.com",
+            "password": "newcustomer1234",
+            "displayName": " New Customer ",
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["accessToken"]
+    assert body["refreshToken"]
+    assert body["user"]["email"] == "new.customer@example.com"
+    assert body["user"]["displayName"] == "New Customer"
+    assert body["user"]["role"] == "CUSTOMER"
+    assert body["user"]["isActive"] is True
+
+    login_response = client.post(
+        "/auth/login",
+        json={"email": "new.customer@example.com", "password": "newcustomer1234"},
+    )
+    assert login_response.status_code == 200
+    assert login_response.json()["user"]["role"] == "CUSTOMER"
+
+
+def test_signup_rejects_duplicate_email_and_role_field() -> None:
+    duplicate_response = client.post(
+        "/auth/signup",
+        json={
+            "email": "customer@example.com",
+            "password": "customer1234",
+            "displayName": "Duplicate Customer",
+        },
+    )
+    assert duplicate_response.status_code == 409
+
+    role_response = client.post(
+        "/auth/signup",
+        json={
+            "email": "role-customer@example.com",
+            "password": "customer1234",
+            "displayName": "Role Customer",
+            "role": "ADMIN",
+        },
+    )
+    assert role_response.status_code == 422
+
+
 def test_login_me_logout_and_audit_logs() -> None:
     login_response = client.post(
         "/auth/login",
@@ -87,6 +137,52 @@ def test_failed_login_records_auth_rejection_metric() -> None:
     assert response.status_code == 401
     metrics = client.get("/metrics").text
     assert_metric_labels(metrics, "auth_attempts_total", action="login", error_code="auth.invalid_credentials", result="rejection")
+
+
+def test_login_records_password_verify_trace_span(monkeypatch: MonkeyPatch) -> None:
+    spans: list[tuple[str, dict[str, object]]] = []
+    attributes: list[tuple[str, object]] = []
+
+    class FakeSpan:
+        def __init__(self, name: str, span_attributes: dict[str, object]) -> None:
+            self.name = name
+            self.span_attributes = span_attributes
+
+        def __enter__(self) -> None:
+            spans.append((self.name, self.span_attributes))
+            return None
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+            return None
+
+    class FakeTraceRecorder:
+        def span(self, name: str, span_attributes: dict[str, object] | None = None) -> FakeSpan:
+            return FakeSpan(name, span_attributes or {})
+
+        def attribute(self, key: str, value: object) -> None:
+            attributes.append((key, value))
+
+        def event(self, name: str, event_attributes: dict[str, object] | None = None) -> None:
+            return None
+
+    monkeypatch.setattr(app_main, "trace_recorder", lambda: FakeTraceRecorder())
+
+    response = client.post(
+        "/auth/login",
+        json={"email": "customer@example.com", "password": "customer1234"},
+    )
+
+    assert response.status_code == 200
+    assert spans == [
+        (
+            "auth.password.verify",
+            {
+                "auth.password.scheme": "pbkdf2_sha256",
+                "auth.password.iterations": app_main.settings.password_iterations,
+            },
+        )
+    ]
+    assert attributes == [("auth.password.valid", True)]
 
 
 def test_access_token_contains_ticketing_claim_contract() -> None:
