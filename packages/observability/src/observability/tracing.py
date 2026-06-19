@@ -158,6 +158,8 @@ def configure_process_tracing(config: ObservabilityConfig) -> None:
 
     provider = TracerProvider(resource=Resource.create(attributes))
     provider.add_span_processor(CallsiteSpanProcessor(config.callsite_module_prefixes))
+    if _pyroscope_span_profiles_enabled(config):
+        provider.add_span_processor(_pyroscope_span_processor())
     if _otlp_trace_export_enabled(config):
         # exporter가 env를 다시 해석하지 않도록, 앞에서 확정한 endpoint만 넘긴다.
         provider.add_span_processor(BatchSpanProcessor(_otlp_span_exporter(config.otlp_trace_exporter_endpoint)))
@@ -279,6 +281,16 @@ def _otlp_trace_export_enabled(config: ObservabilityConfig) -> bool:
     if traces_exporter != "otlp":
         return False
     return bool(config.otlp_trace_exporter_endpoint)
+
+
+def _pyroscope_span_profiles_enabled(config: ObservabilityConfig) -> bool:
+    return config.profiling.enabled and config.profiling.span_profiles_enabled
+
+
+def _pyroscope_span_processor() -> object:
+    from pyroscope.otel import PyroscopeSpanProcessor
+
+    return PyroscopeSpanProcessor()
 
 
 def _otlp_span_exporter(endpoint: str | None) -> object:

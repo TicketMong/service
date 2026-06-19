@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request, status
-from observability import register_error_handlers
+from observability import TraceRecorder, register_error_handlers, trace_recorder
 from prometheus_client import CollectorRegistry
 from sqlalchemy.orm import Session
 from server.operational import register_operational_handlers, sqlalchemy_readiness_check
@@ -13,11 +13,12 @@ from app.audit import record_audit
 from app.config import settings
 from app.database import SessionLocal, engine, get_db
 from app.metrics import configure_auth_metrics
-from app.metrics.events import AuthTokenIssuedRecorded, AuthTokenRevocationRecorded
+from app.metrics.events import AuthTokenRevocationRecorded
 from app.metrics.labels import AuthAction, AuthErrorCode, AuthRevocationReason, AuthTokenType
 from app.metrics.recorder import AuthTelemetryRecorder
 from app.models import AuditLog, RefreshToken, RevokedToken, User
 from app.observability import configure_app_observability
+from app.routes.signup import router as signup_router
 from app.schemas import (
     AuditLogResponse,
     DemoAccountResponse,
@@ -27,8 +28,9 @@ from app.schemas import (
     TokenResponse,
     UserResponse,
 )
-from app.security import create_access_token, create_refresh_token, decode_access_token, hash_refresh_token, verify_password
+from app.security import decode_access_token, hash_refresh_token, verify_password
 from app.seed import DEMO_USERS, seed_demo_users
+from app.token_response import issue_token_response
 
 
 models.Base.metadata.create_all(bind=engine)
@@ -36,6 +38,31 @@ with SessionLocal() as seed_db:
     seed_demo_users(seed_db)
 
 auth_metrics = AuthTelemetryRecorder()
+
+
+def _password_hash_attributes(password_hash: str) -> dict[str, str | int]:
+    """Trace에 안전하게 남길 수 있는 password hash metadata만 추출한다."""
+    try:
+        scheme, iterations, _salt_b64, _digest_b64 = password_hash.split("$", 3)
+    except ValueError:
+        return {"auth.password.scheme": "unknown"}
+
+    attributes: dict[str, str | int] = {"auth.password.scheme": scheme}
+    if iterations.isdigit():
+        attributes["auth.password.iterations"] = int(iterations)
+    return attributes
+
+
+def _verify_password_with_trace(
+    password: str,
+    password_hash: str,
+    trace: TraceRecorder | None = None,
+) -> bool:
+    recorder = trace or trace_recorder()
+    with recorder.span("auth.password.verify", _password_hash_attributes(password_hash)):
+        valid = verify_password(password, password_hash)
+        recorder.attribute("auth.password.valid", valid)
+        return valid
 
 
 def _configure_auth_service_metrics(registry: CollectorRegistry, *, service_environment: str) -> None:
@@ -77,6 +104,7 @@ register_operational_handlers(
     ),
     include_timestamp=True,
 )
+app.include_router(signup_router)
 
 
 @app.get("/health")
@@ -90,7 +118,7 @@ def login(request_body: LoginRequest, request: Request, db: Session = Depends(ge
     attempt = auth_metrics.start_attempt(AuthAction.LOGIN)
     try:
         user = db.query(User).filter(User.email == request_body.email.lower()).one_or_none()
-        if user is None or not verify_password(request_body.password, user.password_hash):
+        if user is None or not _verify_password_with_trace(request_body.password, user.password_hash):
             record_audit(
                 db,
                 request,
@@ -106,7 +134,7 @@ def login(request_body: LoginRequest, request: Request, db: Session = Depends(ge
             attempt.mark_rejection(AuthErrorCode.INACTIVE_ACCOUNT)
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inactive account")
 
-        token = _issue_token_response(db, user)
+        token = issue_token_response(db, user, auth_metrics)
         record_audit(db, request, event_type="LOGIN_SUCCEEDED", outcome="ALLOW", user=user)
         attempt.mark_success()
         return token
@@ -172,7 +200,7 @@ def refresh_token(
                 reason=AuthRevocationReason.REFRESH_ROTATION,
             )
         )
-        token_response = _issue_token_response(db, user)
+        token_response = issue_token_response(db, user, auth_metrics)
         db.commit()
         record_audit(db, request, event_type="TOKEN_REFRESHED", outcome="ALLOW", user=user)
         attempt.mark_success()
@@ -253,27 +281,6 @@ def _get_user_from_payload(payload: dict, db: Session) -> User:
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     return user
-
-
-def _issue_token_response(db: Session, user: User) -> TokenResponse:
-    """access/refresh token을 발급하고 token metric을 남긴다."""
-    access_token, _token_id, _expires_at = create_access_token(
-        user_id=user.id,
-        email=user.email,
-        role=user.role,
-    )
-    refresh_token, token_hash, refresh_expires_at = create_refresh_token()
-    db.add(RefreshToken(token_hash=token_hash, user_id=user.id, expires_at=refresh_expires_at))
-    db.flush()
-    auth_metrics.record(AuthTokenIssuedRecorded(token_type=AuthTokenType.ACCESS))
-    auth_metrics.record(AuthTokenIssuedRecorded(token_type=AuthTokenType.REFRESH))
-    return TokenResponse(
-        accessToken=access_token,
-        refreshToken=refresh_token,
-        expiresIn=settings.token_ttl_seconds,
-        refreshExpiresIn=settings.refresh_token_ttl_seconds,
-        user=UserResponse.model_validate(user),
-    )
 
 
 def _get_active_refresh_token(refresh_token: str, db: Session) -> RefreshToken:

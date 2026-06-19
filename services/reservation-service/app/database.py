@@ -5,15 +5,12 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from observability import instrument_sqlalchemy_engine
+from server import sqlalchemy_engine_options_from_env
 
 from app.config import settings
 
 
-connect_args: dict[str, object] = {}
-if settings.database_url.startswith("sqlite"):
-    connect_args["check_same_thread"] = False
-
-engine = create_engine(settings.database_url, connect_args=connect_args, pool_pre_ping=True)
+engine = create_engine(settings.database_url, **sqlalchemy_engine_options_from_env(settings.database_url))
 instrument_sqlalchemy_engine(engine)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
