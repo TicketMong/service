@@ -27,7 +27,7 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write
   security-events: write
   id-token: write
 
@@ -195,6 +195,29 @@ jobs:
           description: "${{ matrix.service }}에서 HIGH CVE ${{ steps.count-high.outputs.count }}건 발견."
           color: 0xff8c00
 
+      - name: PR에 보안 스캔 결과 코멘트
+        if: github.event_name == 'pull_request' && (steps.critical.outcome == 'failure' || steps.high.outcome == 'failure')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const critical = "${{ steps.count-critical.outputs.count }}" || "0";
+            const high = "${{ steps.count-high.outputs.count }}" || "0";
+            const body = [
+              "## 🔒 Trivy 보안 스캔 결과 - ${{ matrix.service }}",
+              "",
+              "| Severity | Count |",
+              "|----------|-------|",
+              `| 🔴 CRITICAL | ${critical} |`,
+              `| 🟠 HIGH | ${high} |`,
+              "",
+              critical !== "0" ? "❌ **CRITICAL 취약점으로 인해 merge가 차단됩니다.**" : "⚠️ HIGH 취약점이 발견되었습니다.",
+            ].join("\n");
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
       - name: CRITICAL 발견 시 파이프라인 중단
         if: steps.critical.outcome == 'failure'
         run: |
