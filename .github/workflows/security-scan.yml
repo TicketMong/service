@@ -124,14 +124,36 @@ jobs:
             -t ${{ matrix.service }}:scan \
             .
 
-      - name: Trivy 이미지 스캔
+      - name: Trivy CRITICAL 스캔
+        id: critical
         uses: aquasecurity/trivy-action@v0.36.0
+        continue-on-error: true
+        with:
+          image-ref: ${{ matrix.service }}:scan
+          format: json
+          output: trivy-critical-${{ matrix.service }}.json
+          severity: CRITICAL
+          exit-code: 1
+
+      - name: Trivy HIGH 스캔
+        id: high
+        uses: aquasecurity/trivy-action@v0.36.0
+        continue-on-error: true
+        with:
+          image-ref: ${{ matrix.service }}:scan
+          format: json
+          output: trivy-high-${{ matrix.service }}.json
+          severity: HIGH
+          exit-code: 1
+
+      - name: Trivy SARIF 스캔 (GitHub Security 탭용)
+        uses: aquasecurity/trivy-action@v0.36.0
+        continue-on-error: true
         with:
           image-ref: ${{ matrix.service }}:scan
           format: sarif
           output: trivy-${{ matrix.service }}.sarif
           severity: HIGH,CRITICAL
-          exit-code: 1
 
       - name: 스캔 결과 업로드
         uses: github/codeql-action/upload-sarif@v3
@@ -139,15 +161,45 @@ jobs:
         with:
           sarif_file: trivy-${{ matrix.service }}.sarif
 
-      - name: Discord 보안 스캔 알림
-        if: failure()
+      - name: CRITICAL CVE 개수 집계
+        id: count-critical
+        if: steps.critical.outcome == 'failure'
+        run: |
+          count=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' trivy-critical-${{ matrix.service }}.json)
+          echo "count=$count" >> $GITHUB_OUTPUT
+
+      - name: HIGH CVE 개수 집계
+        id: count-high
+        if: steps.high.outcome == 'failure'
+        run: |
+          count=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' trivy-high-${{ matrix.service }}.json)
+          echo "count=$count" >> $GITHUB_OUTPUT
+
+      - name: Discord CRITICAL 알림
+        if: steps.critical.outcome == 'failure'
         uses: sarisia/actions-status-discord@v1
         with:
           webhook: ${{ secrets.DISCORD_SECURITY_WEBHOOK }}
           status: failure
-          title: "🚨 이미지 보안 취약점 발견"
-          description: "${{ matrix.service }} 이미지에서 HIGH/CRITICAL 취약점이 발견되었습니다."
+          title: "🔴 CRITICAL 취약점 발견"
+          description: "${{ matrix.service }}에서 CRITICAL CVE ${{ steps.count-critical.outputs.count }}건 발견. ECR push 차단됨."
           color: 0xff0000
+
+      - name: Discord HIGH 알림
+        if: steps.high.outcome == 'failure'
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.DISCORD_SECURITY_WEBHOOK }}
+          status: failure
+          title: "🟠 HIGH 취약점 발견"
+          description: "${{ matrix.service }}에서 HIGH CVE ${{ steps.count-high.outputs.count }}건 발견."
+          color: 0xff8c00
+
+      - name: CRITICAL 발견 시 파이프라인 중단
+        if: steps.critical.outcome == 'failure'
+        run: |
+          echo "❌ CRITICAL 취약점이 발견되어 파이프라인을 중단합니다."
+          exit 1
 
   no-security-scan:
     name: 보안 스캔 없음
