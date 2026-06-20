@@ -22,7 +22,7 @@ import app.services.payment_events as payment_events_module  # noqa: E402
 from kafka_utils import KafkaProducerOption, TraceAwareKafkaProducer  # noqa: E402
 from kafka_utils import producer as producer_module  # noqa: E402
 from app.metrics.recorder import PaymentTelemetryRecorder  # noqa: E402
-from app.models import PaymentEvent  # noqa: E402
+from app.models import Payment, PaymentEvent  # noqa: E402
 from app.services.payment_events import PaymentEventDispatcher, run_payment_event_dispatcher  # noqa: E402
 from observability import TraceContext  # noqa: E402
 
@@ -168,6 +168,15 @@ def test_provider_and_admin_can_get_settlement_basis() -> None:
     assert provider_response.json()["grossAmount"] == 100000
     assert provider_response.json()["platformFeeAmount"] == 10000
     assert admin_response.status_code == 200
+
+
+def test_payment_settlement_index_matches_query_shape() -> None:
+    index_columns = {
+        index.name: [column.name for column in index.columns]
+        for index in Payment.__table__.indexes
+    }
+
+    assert index_columns["ix_payments_concert_status"] == ["concert_id", "status"]
 
 
 def test_operational_endpoints_and_error_shape() -> None:

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Integer, String, UniqueConstraint, func
+from sqlalchemy import JSON, DateTime, Index, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -8,11 +8,14 @@ from app.database import Base
 
 class Payment(Base):
     __tablename__ = "payments"
-    __table_args__ = (UniqueConstraint("user_id", "idempotency_key", name="uq_payments_user_idempotency_key"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_payments_user_idempotency_key"),
+        Index("ix_payments_concert_status", "concert_id", "status"),
+    )
 
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
     reservation_id: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
-    concert_id: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
+    concert_id: Mapped[str] = mapped_column(String(120), nullable=False)
     user_id: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
     amount: Mapped[int] = mapped_column(Integer, nullable=False)
     method: Mapped[str] = mapped_column(String(30), nullable=False)

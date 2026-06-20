@@ -16,6 +16,13 @@ async def connect_db() -> None:
     global client
     client = AsyncIOMotorClient(settings.mongodb_url)
     instrument_motor_client(client)
+    await ensure_indexes()
+
+
+async def ensure_indexes() -> None:
+    db = get_db()
+    await db["notifications"].create_index([("user_id", 1), ("_id", -1)], name="user_id_1__id_-1")
+    await db["processed_events"].create_index([("event_id", 1)], unique=True, name="event_id_1")
 
 
 def close_db() -> None:

@@ -529,12 +529,13 @@
               "const attempt = Number(pm.environment.get('ticketPollAttempt') || '0') + 1;",
               "pm.response.to.have.status(200);",
               "const body = pm.response.json();",
-              "pm.expect(body).to.be.an('array');",
-              "const ticket = body.find((item) => item.reservationId === pm.environment.get('reservationId'));",
+              "const tickets = Array.isArray(body) ? body : body.items;",
+              "pm.expect(tickets).to.be.an('array');",
+              "const ticket = tickets.find((item) => item.reservationId === pm.environment.get('reservationId'));",
               "",
               "if (!ticket && attempt < maxAttempts) {",
               "  pm.environment.set('ticketPollAttempt', String(attempt));",
-              "  postman.setNextRequest(pm.info.requestName);",
+              "  pm.execution.setNextRequest(pm.info.requestName);",
               "  pm.test('티켓 발행을 기다리는 중', function () {",
               "    pm.expect(attempt, 'poll attempt').to.be.below(maxAttempts);",
               "  });",
@@ -576,7 +577,7 @@
             "value": "{{e2eUserRole}}"
           }
         ],
-        "url": "{{notificationServiceUrl}}/notifications"
+        "url": "{{notificationServiceUrl}}/notifications?limit=20"
       },
       "event": [
         {
@@ -588,12 +589,12 @@
               "const attempt = Number(pm.environment.get('reservationNotificationPollAttempt') || '0') + 1;",
               "pm.response.to.have.status(200);",
               "const body = pm.response.json();",
-              "pm.expect(body).to.be.an('array');",
-              "const notification = body.find((item) => item.type === 'reservation-created' && item.sourceId === pm.environment.get('reservationId'));",
+              "pm.expect(body.items).to.be.an('array');",
+              "const notification = body.items.find((item) => item.type === 'reservation-created' && item.sourceId === pm.environment.get('reservationId'));",
               "",
               "if (!notification && attempt < maxAttempts) {",
               "  pm.environment.set('reservationNotificationPollAttempt', String(attempt));",
-              "  postman.setNextRequest(pm.info.requestName);",
+              "  pm.execution.setNextRequest(pm.info.requestName);",
               "  pm.test('reservation-created 알림을 기다리는 중', function () {",
               "    pm.expect(attempt, 'poll attempt').to.be.below(maxAttempts);",
               "  });",
@@ -630,7 +631,7 @@
             "value": "{{e2eUserRole}}"
           }
         ],
-        "url": "{{notificationServiceUrl}}/notifications"
+        "url": "{{notificationServiceUrl}}/notifications?limit=20"
       },
       "event": [
         {
@@ -642,12 +643,12 @@
               "const attempt = Number(pm.environment.get('paymentNotificationPollAttempt') || '0') + 1;",
               "pm.response.to.have.status(200);",
               "const body = pm.response.json();",
-              "pm.expect(body).to.be.an('array');",
-              "const notification = body.find((item) => item.type === 'payment-approved' && item.sourceId === pm.environment.get('paymentId'));",
+              "pm.expect(body.items).to.be.an('array');",
+              "const notification = body.items.find((item) => item.type === 'payment-approved' && item.sourceId === pm.environment.get('paymentId'));",
               "",
               "if (!notification && attempt < maxAttempts) {",
               "  pm.environment.set('paymentNotificationPollAttempt', String(attempt));",
-              "  postman.setNextRequest(pm.info.requestName);",
+              "  pm.execution.setNextRequest(pm.info.requestName);",
               "  pm.test('payment-approved 알림을 기다리는 중', function () {",
               "    pm.expect(attempt, 'poll attempt').to.be.below(maxAttempts);",
               "  });",
@@ -684,7 +685,7 @@
             "value": "{{e2eUserRole}}"
           }
         ],
-        "url": "{{notificationServiceUrl}}/notifications"
+        "url": "{{notificationServiceUrl}}/notifications?limit=20"
       },
       "event": [
         {
@@ -696,12 +697,12 @@
               "const attempt = Number(pm.environment.get('ticketNotificationPollAttempt') || '0') + 1;",
               "pm.response.to.have.status(200);",
               "const body = pm.response.json();",
-              "pm.expect(body).to.be.an('array');",
-              "const notification = body.find((item) => item.type === 'ticket-issued' && item.sourceId === pm.environment.get('ticketId'));",
+              "pm.expect(body.items).to.be.an('array');",
+              "const notification = body.items.find((item) => item.type === 'ticket-issued' && item.sourceId === pm.environment.get('ticketId'));",
               "",
               "if (!notification && attempt < maxAttempts) {",
               "  pm.environment.set('ticketNotificationPollAttempt', String(attempt));",
-              "  postman.setNextRequest(pm.info.requestName);",
+              "  pm.execution.setNextRequest(pm.info.requestName);",
               "  pm.test('ticket-issued 알림을 기다리는 중', function () {",
               "    pm.expect(attempt, 'poll attempt').to.be.below(maxAttempts);",
               "  });",

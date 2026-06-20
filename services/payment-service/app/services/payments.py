@@ -135,15 +135,13 @@ class PaymentService:
     def settlement_for_concert(self, concert_id: str) -> SettlementBasisResponse:
         """공연별 승인 결제를 집계해 정산 기준 값을 만든다."""
         # 정산 기준은 승인된 결제만 집계한다.
-        gross_amount = (
-            self._db.query(func.coalesce(func.sum(Payment.amount), 0))
+        gross_amount, ticket_count = (
+            self._db.query(
+                func.coalesce(func.sum(Payment.amount), 0),
+                func.count(),
+            )
             .filter(Payment.concert_id == concert_id, Payment.status == "approved")
-            .scalar()
-        )
-        ticket_count = (
-            self._db.query(func.count(Payment.id))
-            .filter(Payment.concert_id == concert_id, Payment.status == "approved")
-            .scalar()
+            .one()
         )
         gross = int(gross_amount or 0)
         count = int(ticket_count or 0)

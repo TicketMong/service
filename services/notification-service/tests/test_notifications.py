@@ -1,6 +1,7 @@
 import asyncio
 from datetime import UTC, datetime
 
+from bson import ObjectId
 from contracts.events import (
     PaymentApprovedEvent,
     PaymentFailedEvent,
@@ -255,9 +256,80 @@ def test_user_can_list_only_own_notifications() -> None:
     response = client.get("/notifications", headers=user_headers(1))
 
     assert response.status_code == 200
-    assert all(item["userId"] == "1" for item in response.json())
+    body = response.json()
+    assert all(item["userId"] == "1" for item in body["items"])
+    assert body["page"] == {"nextCursor": None, "hasMore": False, "limit": 20}
     metrics = client.get("/metrics").text
     assert_metric_labels(metrics, "notification_reads_total", result="success", route_kind="list")
+
+
+def test_list_notifications_applies_limit_and_returns_next_cursor() -> None:
+    inserted_ids = _insert_notifications_for_user("1", 3)
+
+    response = client.get("/notifications?limit=2", headers=user_headers(1))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["id"] for item in body["items"]] == [inserted_ids[2], inserted_ids[1]]
+    assert body["page"] == {"nextCursor": inserted_ids[1], "hasMore": True, "limit": 2}
+
+
+def test_list_notifications_uses_cursor_for_next_page() -> None:
+    inserted_ids = _insert_notifications_for_user("1", 3)
+    first_page = client.get("/notifications?limit=2", headers=user_headers(1)).json()
+
+    response = client.get(
+        f"/notifications?limit=2&cursor={first_page['page']['nextCursor']}",
+        headers=user_headers(1),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["id"] for item in body["items"]] == [inserted_ids[0]]
+    assert body["page"] == {"nextCursor": None, "hasMore": False, "limit": 2}
+
+
+def test_list_notifications_does_not_mix_other_user_notifications() -> None:
+    user_one_ids = _insert_notifications_for_user("1", 2)
+    _insert_notifications_for_user("99", 3)
+
+    response = client.get("/notifications?limit=10", headers=user_headers(1))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["id"] for item in body["items"]] == [user_one_ids[1], user_one_ids[0]]
+    assert {item["userId"] for item in body["items"]} == {"1"}
+    assert body["page"]["hasMore"] is False
+
+
+def test_list_notifications_rejects_invalid_cursor() -> None:
+    response = client.get("/notifications?cursor=not-an-object-id", headers=user_headers(1))
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid notification cursor"
+    metrics = client.get("/metrics").text
+    assert_metric_labels(metrics, "notification_reads_total", result="rejection", route_kind="list")
+
+
+def test_ensure_indexes_creates_notification_and_processed_event_indexes() -> None:
+    import asyncio
+
+    db = database.client["notification_db"]
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(database.ensure_indexes())
+
+    notification_indexes = {
+        index["name"]: index
+        for index in loop.run_until_complete(db["notifications"].list_indexes().to_list(None))
+    }
+    processed_event_indexes = {
+        index["name"]: index
+        for index in loop.run_until_complete(db["processed_events"].list_indexes().to_list(None))
+    }
+
+    assert notification_indexes["user_id_1__id_-1"]["key"] == {"user_id": 1, "_id": -1}
+    assert processed_event_indexes["event_id_1"]["key"] == {"event_id": 1}
+    assert processed_event_indexes["event_id_1"]["unique"] is True
 
 
 def test_user_cannot_read_other_user_notification() -> None:
@@ -371,6 +443,32 @@ def _seed_notifications() -> None:
     loop.run_until_complete(
         handle_business_event(db, payment_approved_event(user_id="2", source_id="payment-2"))
     )
+
+
+def _insert_notifications_for_user(user_id: str, count: int) -> list[str]:
+    import asyncio
+
+    db = database.client["notification_db"]
+    loop = asyncio.get_event_loop()
+    inserted_ids: list[str] = []
+    for index in range(count):
+        notification_id = ObjectId()
+        loop.run_until_complete(
+            db["notifications"].insert_one(
+                {
+                    "_id": notification_id,
+                    "user_id": user_id,
+                    "type": "reservation-created",
+                    "message": f"notification {index}",
+                    "status": "CREATED",
+                    "source_id": f"reservation-{user_id}-{index}",
+                    "metadata": {},
+                    "created_at": OCCURRED_AT,
+                }
+            )
+        )
+        inserted_ids.append(str(notification_id))
+    return inserted_ids
 
 
 def assert_metric_labels(metrics: str, metric_name: str, **labels: str) -> None:

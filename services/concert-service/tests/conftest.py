@@ -7,6 +7,19 @@ os.environ.setdefault("SERVICE_ENVIRONMENT", "test")
 
 def pytest_addoption(parser):
     parser.addoption(
+        "--run-concert-api-benchmark",
+        action="store_true",
+        default=False,
+        help="Run the isolated PostgreSQL API benchmark for concert-service.",
+    )
+    parser.addoption("--concert-benchmark-samples", type=int, default=30)
+    parser.addoption("--concert-benchmark-warmup", type=int, default=3)
+    parser.addoption(
+        "--concert-benchmark-artifact-dir",
+        default="tests/tmp/reports/concert-api-benchmark",
+    )
+    parser.addoption("--concert-benchmark-preset", default="smoke")
+    parser.addoption(
         "--run-public-api-benchmark",
         action="store_true",
         default=False,
