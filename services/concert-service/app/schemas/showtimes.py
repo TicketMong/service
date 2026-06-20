@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel
 
@@ -37,3 +37,17 @@ class PerformanceResponse(BaseModel):
 class PerformanceListResponse(BaseModel):
     items: list[PerformanceResponse]
     page: PageInfo
+
+
+class DatePerformanceResponse(BaseModel):
+    performanceId: str
+    startsAt: datetime
+    endsAt: datetime | None = None
+    saleStatus: str
+
+
+class DatePerformanceListResponse(BaseModel):
+    concertId: str
+    date: date
+    timezone: str
+    performances: list[DatePerformanceResponse]

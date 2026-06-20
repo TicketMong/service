@@ -250,8 +250,12 @@ tasks:
             compose_services="${compose_services:-postgres kafka kafka-init notification-db auth-service concert-service reservation-service payment-service ticket-service notification-service}"
             collections="04-user-booking-happy-path"
             ;;
+          05-concert-public-api-benchmark)
+            compose_services="${compose_services:-postgres concert-service}"
+            collections="05-concert-public-api-benchmark"
+            ;;
           *)
-            printf 'Unknown E2E SCENARIO=%s (expected: all, 01-concert-seat-setup, 02-reservation-create, 03-ticket-issue, 04-user-booking-happy-path).\n' "${scenario_key}" >&2
+            printf 'Unknown E2E SCENARIO=%s (expected: all, 01-concert-seat-setup, 02-reservation-create, 03-ticket-issue, 04-user-booking-happy-path, 05-concert-public-api-benchmark).\n' "${scenario_key}" >&2
             exit 2
             ;;
         esac

@@ -41,6 +41,37 @@ class SeatListResponse(BaseModel):
     page: PageInfo
 
 
+class SeatMapVenueResponse(BaseModel):
+    venueId: str
+    name: str
+
+
+class SeatMapSectionResponse(BaseModel):
+    sectionId: str
+    name: str
+    gradeCode: str
+    price: int = Field(ge=0)
+    currency: str = "KRW"
+    available: bool
+
+
+class SeatMapSeatResponse(BaseModel):
+    seatId: str
+    sectionId: str
+    row: str
+    number: str
+    gradeCode: str
+    status: str
+
+
+class SeatMapResponse(BaseModel):
+    performanceId: str
+    venue: SeatMapVenueResponse
+    mapVersion: str
+    sections: list[SeatMapSectionResponse]
+    seats: list[SeatMapSeatResponse]
+
+
 class SeatGradeResponse(BaseModel):
     id: str
     name: str

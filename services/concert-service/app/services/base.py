@@ -57,6 +57,10 @@ class ConcertDomainService:
             raise ConcertNotFoundError(concert_id)
         return concert
 
+    def _ensure_concert_exists(self, concert_id: str) -> None:
+        if not self.concerts.has_concert(concert_id):
+            raise ConcertNotFoundError(concert_id)
+
     def _venue(self, venue_id: str) -> model.Venue:
         venue = self.venues.get_venue(venue_id)
         if venue is None:

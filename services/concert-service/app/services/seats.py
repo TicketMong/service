@@ -12,10 +12,11 @@ from app.metrics.events import SeatInventoryCommandRecorded
 from app.metrics.labels import CatalogResource, SeatInventoryCommand
 from app.metrics.recorder import ConcertTelemetryRecorder
 from app.services.base import ConcertDomainService, new_id
-from app.services.serializers import hold_request_response, page, seat_grade_response, seat_response
+from app.services.serializers import hold_request_response, page, seat_grade_response, seat_map_response, seat_response
 
 
 concert_metrics = ConcertTelemetryRecorder()
+SEAT_LIST_MAX_LIMIT = 500
 
 
 class SeatService(ConcertDomainService):
@@ -24,7 +25,26 @@ class SeatService(ConcertDomainService):
         attempt = concert_metrics.start_catalog_query(CatalogResource.SEATS)
         try:
             self._showtime(showtime_id)
-            response = schemas.SeatListResponse(items=[seat_response(item) for item in self.seats.list_seats(showtime_id, limit)], page=page())
+            response = schemas.SeatListResponse(
+                items=[seat_response(item) for item in self.seats.list_seats(showtime_id, min(limit, SEAT_LIST_MAX_LIMIT))],
+                page=page(),
+            )
+            attempt.mark_success()
+            return response
+        except HttpError as exc:
+            if exc.observation != DOMAIN_REJECTION_OBSERVATION:
+                raise
+            attempt.mark_rejection()
+            raise
+        finally:
+            attempt.record()
+
+    def get_seat_map(self, showtime_id: str) -> schemas.SeatMapResponse:
+        """선택한 performance의 좌석도와 현재 좌석 상태를 반환한다."""
+        attempt = concert_metrics.start_catalog_query(CatalogResource.SEATS)
+        try:
+            showtime = self._showtime(showtime_id)
+            response = seat_map_response(showtime)
             attempt.mark_success()
             return response
         except HttpError as exc:

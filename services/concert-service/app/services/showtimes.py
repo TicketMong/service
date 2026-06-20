@@ -1,3 +1,5 @@
+from datetime import UTC, date, datetime, timedelta
+
 from metrics import MetricResult
 from observability import DOMAIN_REJECTION_OBSERVATION, HttpError
 
@@ -8,10 +10,12 @@ from app.metrics.events import ConcertAdminCommandRecorded
 from app.metrics.labels import CatalogResource, ConcertAdminCommand
 from app.metrics.recorder import ConcertTelemetryRecorder
 from app.services.base import ConcertDomainService, new_id
-from app.services.serializers import page, performance_response, showtime_response
+from app.services.catalog import SERVICE_TIMEZONE
+from app.services.serializers import date_performance_response, page, performance_response, showtime_response
 
 
 concert_metrics = ConcertTelemetryRecorder()
+PERFORMANCE_LIST_MAX_LIMIT = 24
 
 
 class ShowtimeService(ConcertDomainService):
@@ -72,8 +76,34 @@ class ShowtimeService(ConcertDomainService):
         try:
             self._concert(concert_id)
             response = schemas.PerformanceListResponse(
-                items=[performance_response(item) for item in self.showtimes.list_showtimes(concert_id, limit)],
+                items=[performance_response(item) for item in self.showtimes.list_showtimes(concert_id, min(limit, PERFORMANCE_LIST_MAX_LIMIT))],
                 page=page(),
+            )
+            attempt.mark_success()
+            return response
+        except HttpError as exc:
+            if exc.observation != DOMAIN_REJECTION_OBSERVATION:
+                raise
+            attempt.mark_rejection()
+            raise
+        finally:
+            attempt.record()
+
+    def list_performances_by_date(self, concert_id: str, selected_date: date) -> schemas.DatePerformanceListResponse:
+        """선택 날짜의 performance만 반환한다."""
+        attempt = concert_metrics.start_catalog_query(CatalogResource.PERFORMANCES)
+        try:
+            self._ensure_concert_exists(concert_id)
+            day_start = datetime(selected_date.year, selected_date.month, selected_date.day, tzinfo=UTC)
+            day_end = day_start + timedelta(days=1)
+            response = schemas.DatePerformanceListResponse(
+                concertId=concert_id,
+                date=selected_date,
+                timezone=SERVICE_TIMEZONE,
+                performances=[
+                    date_performance_response(item)
+                    for item in self.showtimes.list_showtimes_between(concert_id, day_start, day_end)
+                ],
             )
             attempt.mark_success()
             return response

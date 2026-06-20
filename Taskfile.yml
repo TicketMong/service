@@ -109,6 +109,31 @@ tasks:
         vars:
           SCENARIO: '{{default "" .SCENARIO}}'
 
+  benchmark-concert-public-api:
+    desc: Run isolated PostgreSQL large-dataset benchmark for concert-service public query APIs.
+    cmds:
+      - task: tests:test-runner-build
+        vars:
+          SERVICE: concert-service
+      - |
+        set -eu
+        repo_root="$(pwd -P)"
+        image='{{default "ticketing-test-runner" .TEST_RUNNER_IMAGE_PREFIX}}-concert-service:local'
+        service_head="$(git -C "${repo_root}" rev-parse --short HEAD)"
+        service_dirty=false
+        if [ -n "$(git -C "${repo_root}" status --short)" ]; then
+          service_dirty=true
+        fi
+        docker run --rm \
+          -e SERVICE_GIT_HEAD="${service_head}" \
+          -e SERVICE_GIT_DIRTY="${service_dirty}" \
+          -e TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal \
+          -v "${repo_root}":/workspace \
+          -v /var/run/docker.sock:/var/run/docker.sock \
+          -w /workspace/services/concert-service \
+          "${image}" \
+          sh -c "PYTHONPATH=. /opt/test-env/bin/python -m pytest -q -s -p no:cacheprovider --run-public-api-benchmark --public-benchmark-concerts={{default "1000" .CONCERTS}} --public-benchmark-showtimes-per-concert={{default "4" .SHOWTIMES_PER_CONCERT}} --public-benchmark-seats-per-showtime={{default "100" .SEATS_PER_SHOWTIME}} --public-benchmark-samples={{default "50" .SAMPLES}} --public-benchmark-warmup={{default "5" .WARMUP}} tests/integration/test_public_api_benchmark.py"
+
   app-images-build:
     desc: Build service and dashboard Docker images.
     cmds:

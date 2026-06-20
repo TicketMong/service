@@ -1,7 +1,7 @@
 """Showtime entities."""
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -11,6 +11,7 @@ from app.entities.venues import Venue
 
 class Showtime(Base):
     __tablename__ = "showtimes"
+    __table_args__ = (Index("ix_showtimes_concert_starts_at", "concert_id", "starts_at"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     concert_id: Mapped[str] = mapped_column(ForeignKey("concerts.id"), nullable=False, index=True)

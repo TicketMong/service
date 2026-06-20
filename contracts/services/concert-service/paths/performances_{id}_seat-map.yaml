@@ -1,19 +1,19 @@
 get:
   tags:
     - User API
-  summary: Get concert
-  operationId: getConcert
+  summary: Get performance seat map
+  operationId: getPerformanceSeatMap
   parameters:
     - $ref: ../../../common/components.yaml#/components/parameters/X-Request-Id
     - $ref: ../../../common/components.yaml#/components/parameters/X-Trace-Id
     - $ref: ../../../common/components.yaml#/components/parameters/id
   responses:
     "200":
-      description: Concert detail.
+      description: Seat map for one performance.
       content:
         application/json:
           schema:
-            $ref: ../openapi.yaml#/components/schemas/ConcertDetail
+            $ref: ../openapi.yaml#/components/schemas/SeatMapResponse
     "401":
       $ref: ../../../common/components.yaml#/components/responses/Unauthorized
     "404":

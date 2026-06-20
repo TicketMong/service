@@ -20,12 +20,20 @@ paths:
     $ref: ./paths/metrics.yaml
   /concerts:
     $ref: ./paths/concerts.yaml
+  /concerts/recommended:
+    $ref: ./paths/concerts_recommended.yaml
   /concerts/{id}:
     $ref: ./paths/concerts_{id}.yaml
+  /concerts/{id}/calendar:
+    $ref: ./paths/concerts_{id}_calendar.yaml
   /concerts/{id}/performances:
     $ref: ./paths/concerts_{id}_performances.yaml
+  /concerts/{id}/dates/{date}/performances:
+    $ref: ./paths/concerts_{id}_dates_{date}_performances.yaml
   /performances/{id}/seats:
     $ref: ./paths/performances_{id}_seats.yaml
+  /performances/{id}/seat-map:
+    $ref: ./paths/performances_{id}_seat-map.yaml
   /provider/concerts:
     $ref: ./paths/provider_concerts.yaml
   /provider/concerts/{concertId}:
@@ -175,6 +183,213 @@ components:
             $ref: "#/components/schemas/Concert"
         page:
           $ref: ../../common/components.yaml#/components/schemas/PageInfo
+    RecommendedVenueSummary:
+      type: object
+      required:
+        - venueId
+        - name
+      properties:
+        venueId:
+          type: string
+        name:
+          type: string
+        city:
+          type: string
+    PerformancePeriod:
+      type: object
+      required:
+        - startDate
+        - endDate
+      properties:
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+    RecommendedConcert:
+      type: object
+      required:
+        - concertId
+        - title
+        - venue
+        - performancePeriod
+        - saleBadge
+        - createdAt
+      properties:
+        concertId:
+          type: string
+        title:
+          type: string
+        posterImageUrl:
+          type: string
+          format: uri
+        venue:
+          $ref: "#/components/schemas/RecommendedVenueSummary"
+        performancePeriod:
+          $ref: "#/components/schemas/PerformancePeriod"
+        saleBadge:
+          type: string
+          enum:
+            - ON_SALE
+            - COMING_SOON
+            - SOLD_OUT
+            - CLOSED
+        createdAt:
+          type: string
+          format: date-time
+    CursorPageInfo:
+      type: object
+      required:
+        - hasMore
+        - limit
+      properties:
+        nextCursor:
+          type: string
+          nullable: true
+        hasMore:
+          type: boolean
+        limit:
+          type: integer
+    RecommendedConcertListResponse:
+      type: object
+      required:
+        - items
+        - page
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecommendedConcert"
+        page:
+          $ref: "#/components/schemas/CursorPageInfo"
+    ConcertDetailVenue:
+      type: object
+      required:
+        - venueId
+        - name
+      properties:
+        venueId:
+          type: string
+        name:
+          type: string
+        address:
+          type: string
+        city:
+          type: string
+    BookingPeriod:
+      type: object
+      properties:
+        openAt:
+          type: string
+          format: date-time
+        closeAt:
+          type: string
+          format: date-time
+    PriceBand:
+      type: object
+      required:
+        - gradeCode
+        - gradeName
+        - price
+        - currency
+      properties:
+        gradeCode:
+          type: string
+        gradeName:
+          type: string
+        price:
+          type: integer
+          minimum: 0
+        currency:
+          type: string
+    PurchaseLimit:
+      type: object
+      required:
+        - maxTicketsPerUser
+        - maxTicketsPerPerformance
+      properties:
+        maxTicketsPerUser:
+          type: integer
+          minimum: 1
+        maxTicketsPerPerformance:
+          type: integer
+          minimum: 1
+    ConcertDetail:
+      type: object
+      required:
+        - concertId
+        - title
+        - venue
+        - performancePeriod
+        - bookingPeriod
+        - priceBands
+        - purchaseLimit
+        - notices
+        - saleStatus
+      properties:
+        concertId:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        posterImageUrl:
+          type: string
+          format: uri
+        venue:
+          $ref: "#/components/schemas/ConcertDetailVenue"
+        performancePeriod:
+          $ref: "#/components/schemas/PerformancePeriod"
+        bookingPeriod:
+          $ref: "#/components/schemas/BookingPeriod"
+        priceBands:
+          type: array
+          items:
+            $ref: "#/components/schemas/PriceBand"
+        purchaseLimit:
+          $ref: "#/components/schemas/PurchaseLimit"
+        notices:
+          type: array
+          items:
+            type: string
+        saleStatus:
+          type: string
+          enum:
+            - ON_SALE
+            - COMING_SOON
+            - SOLD_OUT
+            - CLOSED
+    CalendarDay:
+      type: object
+      required:
+        - date
+        - bookable
+      properties:
+        date:
+          type: string
+          format: date
+        bookable:
+          type: boolean
+    ConcertCalendarResponse:
+      type: object
+      required:
+        - concertId
+        - yearMonth
+        - timezone
+        - days
+      properties:
+        concertId:
+          type: string
+        yearMonth:
+          type: string
+          pattern: "^\\d{4}-\\d{2}$"
+        timezone:
+          type: string
+        days:
+          type: array
+          items:
+            $ref: "#/components/schemas/CalendarDay"
     PerformanceListResponse:
       type: object
       required:
@@ -187,6 +402,47 @@ components:
             $ref: "#/components/schemas/Performance"
         page:
           $ref: ../../common/components.yaml#/components/schemas/PageInfo
+    DatePerformance:
+      type: object
+      required:
+        - performanceId
+        - startsAt
+        - saleStatus
+      properties:
+        performanceId:
+          type: string
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        saleStatus:
+          type: string
+          enum:
+            - ON_SALE
+            - COMING_SOON
+            - SOLD_OUT
+            - CLOSED
+    DatePerformanceListResponse:
+      type: object
+      required:
+        - concertId
+        - date
+        - timezone
+        - performances
+      properties:
+        concertId:
+          type: string
+        date:
+          type: string
+          format: date
+        timezone:
+          type: string
+        performances:
+          type: array
+          items:
+            $ref: "#/components/schemas/DatePerformance"
     SeatListResponse:
       type: object
       required:
@@ -199,6 +455,88 @@ components:
             $ref: "#/components/schemas/Seat"
         page:
           $ref: ../../common/components.yaml#/components/schemas/PageInfo
+    SeatMapVenue:
+      type: object
+      required:
+        - venueId
+        - name
+      properties:
+        venueId:
+          type: string
+        name:
+          type: string
+    SeatMapSection:
+      type: object
+      required:
+        - sectionId
+        - name
+        - gradeCode
+        - price
+        - currency
+        - available
+      properties:
+        sectionId:
+          type: string
+        name:
+          type: string
+        gradeCode:
+          type: string
+        price:
+          type: integer
+          minimum: 0
+        currency:
+          type: string
+        available:
+          type: boolean
+    SeatMapSeat:
+      type: object
+      required:
+        - seatId
+        - sectionId
+        - row
+        - number
+        - gradeCode
+        - status
+      properties:
+        seatId:
+          type: string
+        sectionId:
+          type: string
+        row:
+          type: string
+        number:
+          type: string
+        gradeCode:
+          type: string
+        status:
+          type: string
+          enum:
+            - AVAILABLE
+            - UNAVAILABLE
+            - ACCESSIBLE_ONLY
+    SeatMapResponse:
+      type: object
+      required:
+        - performanceId
+        - venue
+        - mapVersion
+        - sections
+        - seats
+      properties:
+        performanceId:
+          type: string
+        venue:
+          $ref: "#/components/schemas/SeatMapVenue"
+        mapVersion:
+          type: string
+        sections:
+          type: array
+          items:
+            $ref: "#/components/schemas/SeatMapSection"
+        seats:
+          type: array
+          items:
+            $ref: "#/components/schemas/SeatMapSeat"
     ConcertDraft:
       type: object
       required:
