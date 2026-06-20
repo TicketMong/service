@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 
+import pytest
 from pytest import MonkeyPatch
 
 
@@ -11,6 +12,16 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import app  # noqa: E402
 import app.main as app_main  # noqa: E402
+from app.database import SessionLocal  # noqa: E402
+from app.models import User  # noqa: E402
+from app.security import (  # noqa: E402
+    UnsupportedPasswordHashError,
+    hash_password,
+    hash_password_argon2id,
+    hash_password_legacy_pbkdf2,
+    identify_password_hash,
+    verify_password,
+)
 
 
 client = TestClient(app)
@@ -51,6 +62,48 @@ def test_signup_creates_customer_and_issues_tokens() -> None:
     )
     assert login_response.status_code == 200
     assert login_response.json()["user"]["role"] == "CUSTOMER"
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.email == "new.customer@example.com").one()
+        assert identify_password_hash(user.password_hash) == "pbkdf2_sha256"
+
+
+def test_password_hash_supports_argon2id_and_legacy_pbkdf2() -> None:
+    default_hash = hash_password("default-password-1234")
+    argon2id_hash = hash_password_argon2id("new-password-1234")
+    legacy_hash = hash_password_legacy_pbkdf2("legacy-password-1234")
+
+    assert identify_password_hash(default_hash) == "pbkdf2_sha256"
+    assert identify_password_hash(argon2id_hash) == "argon2id"
+    assert identify_password_hash(legacy_hash) == "pbkdf2_sha256"
+    assert verify_password("default-password-1234", default_hash) is True
+    assert verify_password("new-password-1234", argon2id_hash) is True
+    assert verify_password("wrong-password", argon2id_hash) is False
+    assert verify_password("legacy-password-1234", legacy_hash) is True
+    assert verify_password("wrong-password", legacy_hash) is False
+    with pytest.raises(UnsupportedPasswordHashError):
+        verify_password("any-password", "bcrypt$unsupported")
+
+
+def test_login_accepts_legacy_pbkdf2_password_hash() -> None:
+    with SessionLocal() as db:
+        db.add(
+            User(
+                email="legacy.customer@example.com",
+                password_hash=hash_password_legacy_pbkdf2("legacycustomer1234"),
+                display_name="Legacy Customer",
+                role="CUSTOMER",
+                is_active=True,
+            )
+        )
+        db.commit()
+
+    response = client.post(
+        "/auth/login",
+        json={"email": "legacy.customer@example.com", "password": "legacycustomer1234"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["user"]["email"] == "legacy.customer@example.com"
 
 
 def test_signup_rejects_duplicate_email_and_role_field() -> None:

@@ -28,7 +28,7 @@ from app.schemas import (
     TokenResponse,
     UserResponse,
 )
-from app.security import decode_access_token, hash_refresh_token, verify_password
+from app.security import decode_access_token, hash_refresh_token, password_hash_metadata, verify_password
 from app.seed import DEMO_USERS, seed_demo_users
 from app.token_response import issue_token_response
 
@@ -42,15 +42,7 @@ auth_metrics = AuthTelemetryRecorder()
 
 def _password_hash_attributes(password_hash: str) -> dict[str, str | int]:
     """Trace에 안전하게 남길 수 있는 password hash metadata만 추출한다."""
-    try:
-        scheme, iterations, _salt_b64, _digest_b64 = password_hash.split("$", 3)
-    except ValueError:
-        return {"auth.password.scheme": "unknown"}
-
-    attributes: dict[str, str | int] = {"auth.password.scheme": scheme}
-    if iterations.isdigit():
-        attributes["auth.password.iterations"] = int(iterations)
-    return attributes
+    return password_hash_metadata(password_hash)
 
 
 def _verify_password_with_trace(
