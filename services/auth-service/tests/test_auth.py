@@ -4,7 +4,7 @@ from pytest import MonkeyPatch
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app.main import app  # noqa: E402
+from app.main import create_app  # noqa: E402
 import app.main as app_main  # noqa: E402
 from app.database import SessionLocal  # noqa: E402
 from app.models import User  # noqa: E402
@@ -17,7 +17,7 @@ from app.security import (  # noqa: E402
     verify_password,
 )
 
-
+app = create_app()
 client = TestClient(app)
 
 

@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from server.ids import deterministic_uuid_string  # noqa: E402
 
 from app.database import Base, SessionLocal, engine  # noqa: E402
-from app.main import app  # noqa: E402
+from app.main import create_app  # noqa: E402
 import app.main as app_main  # noqa: E402
 import app.routes.payments as payment_routes  # noqa: E402
 import app.services.payment_events as payment_events_module  # noqa: E402
@@ -29,7 +29,7 @@ from app.models import Payment, PaymentEvent  # noqa: E402
 from app.services.payment_events import PaymentEventDispatcher, run_payment_event_dispatcher  # noqa: E402
 from observability import TraceContext  # noqa: E402
 
-
+app = create_app()
 client = TestClient(app)
 
 

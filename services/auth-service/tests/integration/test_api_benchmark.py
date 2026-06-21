@@ -24,10 +24,12 @@ from tests.benchmarks.api_presets import ApiBenchmarkPreset, chunked, load_prese
 from tests.benchmarks.query_analysis import explain_postgres_sql, percentile_interpretation
 
 from app.database import Base, get_db
-from app.main import app as auth_app
+from app.main import create_app as create_auth_app
 from app.models import AuditLog, RefreshToken, User
 from app.security import create_access_token, hash_password, hash_refresh_token
 
+
+auth_app = create_auth_app()
 
 SERVICE_NAME = "auth-service"
 BENCHMARK_PASSWORD = "benchmark-password-1234"

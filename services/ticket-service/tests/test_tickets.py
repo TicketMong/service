@@ -18,12 +18,14 @@ from app.consumers import kafka_consumer as kafka_consumer_module
 from app.consumers.kafka_consumer import consume_events
 from app.database import Base, get_db
 from app.kafka import get_kafka_producer
-from app.main import app
+from app.main import create_app
 import app.main as main_module
 from app.routers import tickets as tickets_router_module
 from app.services import ticket_service
 import app.worker as worker_module
 
+
+app = create_app()
 
 RESERVATION_ID = deterministic_uuid_string("ticket-service-test", "reservation", 1)
 CONCERT_ID = deterministic_uuid_string("ticket-service-test", "concert", 1)

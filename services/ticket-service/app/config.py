@@ -6,6 +6,8 @@ from observability import ObservabilityConfig, observability_config_from_env
 
 class Settings:
     service_name = "ticket-service"
+    port = int(os.getenv("PORT", "8085"))
+    uvicorn_workers = int(os.getenv("UVICORN_WORKERS", "2"))
     database_url = os.getenv("DATABASE_URL", "sqlite:///./ticket_service.db")
     kafka_bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "")
     kafka_group_id = os.getenv("KAFKA_GROUP_ID", "ticket-service")

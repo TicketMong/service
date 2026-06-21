@@ -16,11 +16,13 @@ from server.ids import deterministic_uuid_string
 
 from app.consumers import kafka_consumer
 import app.database as database
-from app.main import app
+from app.main import create_app
 import app.main as app_main
 from app.services.notification_service import handle_business_event
 import app.worker as worker_module
 
+
+app = create_app()
 
 def override_get_db():
     return database.client["notification_db"]

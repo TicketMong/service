@@ -1,7 +1,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from prometheus_client import CollectorRegistry
 from server.operational import register_operational_handlers
 
@@ -10,6 +10,8 @@ from app.database import connect_db, close_db
 from app.metrics import configure_notification_metrics
 from app.observability import configure_app_observability
 from app.routers import notifications
+
+router = APIRouter()
 
 
 def _configure_notification_service_metrics(registry: CollectorRegistry, *, service_environment: str) -> None:
@@ -31,27 +33,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         close_db()
 
 
-observability_config = settings.observability_config()
-app = FastAPI(title=settings.service_name, lifespan=lifespan)
-configure_app_observability(app, observability_config)
-register_operational_handlers(
-    app,
-    service_name=settings.service_name,
-    service_version=observability_config.service_version,
-    service_environment=observability_config.service_environment,
-    readiness_checks={},
-    readiness_success_status="ok",
-    readiness_failure_status="failed",
-    include_readiness_checks=False,
-    configure_metrics=lambda registry: _configure_notification_service_metrics(
-        registry,
+def create_app() -> FastAPI:
+    observability_config = settings.observability_config()
+    app = FastAPI(title=settings.service_name, lifespan=lifespan)
+    configure_app_observability(app, observability_config)
+    register_operational_handlers(
+        app,
+        service_name=settings.service_name,
+        service_version=observability_config.service_version,
         service_environment=observability_config.service_environment,
-    ),
-)
-app.include_router(notifications.router)
+        readiness_checks={},
+        readiness_success_status="ok",
+        readiness_failure_status="failed",
+        include_readiness_checks=False,
+        configure_metrics=lambda registry: _configure_notification_service_metrics(
+            registry,
+            service_environment=observability_config.service_environment,
+        ),
+    )
+    app.include_router(notifications.router)
+    app.include_router(router)
+    return app
 
 
 # 기존 health 엔드포인트 유지
-@app.get("/health")
+@router.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": settings.service_name}
