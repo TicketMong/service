@@ -4,6 +4,7 @@ import json
 import logging
 import sys
 import types
+from uuid import UUID, uuid5
 
 from errors import in_domain
 from fastapi import FastAPI
@@ -53,6 +54,10 @@ from observability import (
 from observability import profiling as profiling_module
 from observability import tracing as tracing_module
 from observability.tracing import _otlp_trace_export_enabled
+
+
+TEST_UUID_NAMESPACE = UUID("018f0d5b-8e30-7a60-9bf1-91b6d979d3c0")
+SEAT_ID = str(uuid5(TEST_UUID_NAMESPACE, "observability-test:seat:1"))
 
 
 def test_observability_config_from_env_maps_explicit_otel_settings() -> None:
@@ -887,13 +892,13 @@ def test_request_observability_marks_slow_requests_for_collector_policy(caplog, 
 
 def test_error_context_reads_errors_package_context() -> None:
     exc = RuntimeError("seat already reserved")
-    in_domain("reservation").code("reservation.conflict").with_attr("seat_id", "seat-A1").attach(exc)
+    in_domain("reservation").code("reservation.conflict").with_attr("seat_id", SEAT_ID).attach(exc)
 
     context = error_context_module.extract_error_context(exc)
 
     assert context["error.code"] == "reservation.conflict"
     assert context["error.domain"] == "reservation"
-    assert context["error.attr.seat_id"] == "seat-A1"
+    assert context["error.attr.seat_id"] == SEAT_ID
     assert context["error.occurred_at"]
 
 

@@ -216,7 +216,7 @@ def _benchmark_endpoints(targets: SeedTargets) -> list[EndpointCase]:
             json_body=lambda index: {
                 "reservationId": uuid_id("reservation", "create", index),
                 "concertId": targets.concert_id,
-                "seatId": f"A-{index:06d}",
+                "seatId": uuid_id("seat", "create", index),
                 "amount": 50000,
                 "method": "mock",
                 "simulation": "approve",
