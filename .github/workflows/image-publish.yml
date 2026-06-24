@@ -166,7 +166,7 @@ jobs:
           image-ref: ${{ matrix.image }}:scan
           format: table
           severity: CRITICAL
-          exit-code: 0
+          exit-code: 1
       - name: Docker 이미지 빌드
         shell: bash
         working-directory: ${{ github.workspace }}
