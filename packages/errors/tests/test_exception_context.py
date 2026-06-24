@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
+from uuid import UUID, uuid5
 
 from errors import ContextualError, errctx, get_exception_context, in_domain
+
+
+TEST_UUID_NAMESPACE = UUID("018f0d5b-8e30-7a60-9bf1-91b6d979d3c0")
+SEAT_ID = str(uuid5(TEST_UUID_NAMESPACE, "errors-test:seat:1"))
+RESERVATION_ID = str(uuid5(TEST_UUID_NAMESPACE, "errors-test:reservation:1"))
 
 
 def test_attach_context_to_regular_exception_and_raise_same_object() -> None:
@@ -13,7 +19,7 @@ def test_attach_context_to_regular_exception_and_raise_same_object() -> None:
         in_domain("reservation")
         .code("reservation.conflict")
         .tag("seat")
-        .with_attr("seat_id", "seat-A1")
+        .with_attr("seat_id", SEAT_ID)
         .public("Seat is already reserved.")
         .hint("Check active reservation unique constraint.")
         .owner("reservation")
@@ -31,7 +37,7 @@ def test_attach_context_to_regular_exception_and_raise_same_object() -> None:
     assert context.domain == "reservation"
     assert context.code == "reservation.conflict"
     assert context.tags == ("seat",)
-    assert context.attributes == {"seat_id": "seat-A1"}
+    assert context.attributes == {"seat_id": SEAT_ID}
     assert context.public_message == "Seat is already reserved."
     assert context.hint == "Check active reservation unique constraint."
     assert context.owner == "reservation"
@@ -49,14 +55,14 @@ def test_get_exception_context_returns_empty_context_when_missing() -> None:
 def test_attach_merges_with_existing_context_without_dropping_values() -> None:
     exc = RuntimeError("reservation failed")
 
-    in_domain("reservation").code("reservation.conflict").tag("seat").with_attr("seat_id", "seat-A1").attach(exc)
+    in_domain("reservation").code("reservation.conflict").tag("seat").with_attr("seat_id", SEAT_ID).attach(exc)
     (
         errctx()
         .in_domain("payment")
         .code("payment.failed")
         .tag("retry")
         .tags("dependency", "seat")
-        .with_attr("reservation_id", "reservation-1")
+        .with_attr("reservation_id", RESERVATION_ID)
         .attach(exc)
     )
 
@@ -66,8 +72,8 @@ def test_attach_merges_with_existing_context_without_dropping_values() -> None:
     assert context.code == "reservation.conflict"
     assert context.tags == ("seat", "retry", "dependency")
     assert context.attributes == {
-        "seat_id": "seat-A1",
-        "reservation_id": "reservation-1",
+        "seat_id": SEAT_ID,
+        "reservation_id": RESERVATION_ID,
     }
 
 
@@ -78,7 +84,7 @@ def test_raise_from_preserves_exception_chain_and_context_lookup() -> None:
     try:
         try:
             original = ValueError("unique constraint")
-            in_domain("reservation").code("reservation.conflict").with_attr("seat_id", "seat-A1").attach(original)
+            in_domain("reservation").code("reservation.conflict").with_attr("seat_id", SEAT_ID).attach(original)
             raise original
         except ValueError as exc:
             raise ReservationConflict("Seat is already reserved.") from exc
@@ -89,7 +95,7 @@ def test_raise_from_preserves_exception_chain_and_context_lookup() -> None:
         assert context.cause is wrapped.__cause__
         assert context.domain == "reservation"
         assert context.code == "reservation.conflict"
-        assert context.attributes == {"seat_id": "seat-A1"}
+        assert context.attributes == {"seat_id": SEAT_ID}
 
 
 def test_business_code_can_add_context_without_observability_imports() -> None:
@@ -101,7 +107,7 @@ def test_business_code_can_add_context_without_observability_imports() -> None:
                 in_domain("reservation")
                 .code("reservation.seat_hold_conflict")
                 .tag("seat")
-                .with_attr("seat_id", "seat-A1")
+                .with_attr("seat_id", SEAT_ID)
                 .public("Seat is already reserved.")
                 .attach(exc)
             )

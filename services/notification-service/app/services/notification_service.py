@@ -22,6 +22,7 @@ from app.metrics.events import NotificationReadRecorded
 from app.metrics.labels import NotificationRouteKind
 from app.metrics.recorder import NotificationTelemetryRecorder
 from app.models import notification_to_doc, processed_event_to_doc
+from app.schemas import NotificationListResponse, NotificationPageInfo
 
 
 notification_metrics = NotificationTelemetryRecorder()
@@ -43,13 +44,30 @@ def _serialize(doc: dict) -> dict:
 
 
 async def list_notifications(
-    db: AsyncIOMotorDatabase, user: UserContext
-) -> list[dict]:
+    db: AsyncIOMotorDatabase,
+    user: UserContext,
+    *,
+    limit: int,
+    cursor: str | None = None,
+) -> NotificationListResponse:
     """알림 목록 조회 결과를 route_kind 단위 metric으로 남긴다."""
     try:
         query = {"user_id": user.user_id}
-        cursor = db["notifications"].find(query).sort("_id", -1)
-        items = [_serialize(doc) async for doc in cursor]
+        if cursor is not None:
+            if not ObjectId.is_valid(cursor):
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid notification cursor")
+            query["_id"] = {"$lt": ObjectId(cursor)}
+
+        db_cursor = db["notifications"].find(query).sort("_id", -1).limit(limit + 1)
+        docs = [doc async for doc in db_cursor]
+        page_docs = docs[:limit]
+        next_cursor = str(page_docs[-1]["_id"]) if len(docs) > limit and page_docs else None
+        items = [_serialize(doc) for doc in page_docs]
+    except HTTPException:
+        notification_metrics.record(
+            NotificationReadRecorded(route_kind=NotificationRouteKind.LIST, result=MetricResult.REJECTION)
+        )
+        raise
     except Exception:
         notification_metrics.record(
             NotificationReadRecorded(route_kind=NotificationRouteKind.LIST, result=MetricResult.FAILURE)
@@ -58,7 +76,10 @@ async def list_notifications(
     notification_metrics.record(
         NotificationReadRecorded(route_kind=NotificationRouteKind.LIST, result=MetricResult.SUCCESS)
     )
-    return items
+    return NotificationListResponse(
+        items=items,
+        page=NotificationPageInfo(nextCursor=next_cursor, hasMore=next_cursor is not None, limit=limit),
+    )
 
 
 async def get_notification(

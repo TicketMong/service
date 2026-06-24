@@ -5,6 +5,8 @@ from observability import ObservabilityConfig, observability_config_from_env
 
 class Settings:
     service_name = "payment-service"
+    port = int(os.getenv("PORT", "8080"))
+    uvicorn_workers = int(os.getenv("UVICORN_WORKERS", "2"))
     database_url = os.getenv("DATABASE_URL", "sqlite:///./payment_service.db")
     jwt_secret = os.getenv("JWT_SECRET", "ticketing-dev-secret")
     jwt_issuer = os.getenv("JWT_ISSUER", "auth-service")

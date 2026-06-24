@@ -95,6 +95,18 @@ class SeatNotFoundError(HttpError):
         )
 
 
+class InvalidPublicRequestError(HttpError):
+    observation: ErrorObservation = DOMAIN_REJECTION_OBSERVATION
+
+    def __init__(self, message: str) -> None:
+        super().__init__(
+            status.HTTP_400_BAD_REQUEST,
+            "public_request.invalid",
+            message,
+            domain="concert",
+        )
+
+
 class ConcertEmptyUpdateError(HttpError):
     observation: ErrorObservation = DOMAIN_REJECTION_OBSERVATION
 

@@ -1,6 +1,7 @@
 import asyncio
 from datetime import UTC, datetime
 
+from bson import ObjectId
 from contracts.events import (
     PaymentApprovedEvent,
     PaymentFailedEvent,
@@ -11,13 +12,17 @@ from contracts.events import (
 import pytest
 from mongomock_motor import AsyncMongoMockClient
 from fastapi.testclient import TestClient
+from server.ids import deterministic_uuid_string
 
 from app.consumers import kafka_consumer
 import app.database as database
-from app.main import app
+from app.main import create_app
 import app.main as app_main
 from app.services.notification_service import handle_business_event
+import app.worker as worker_module
 
+
+app = create_app()
 
 def override_get_db():
     return database.client["notification_db"]
@@ -35,18 +40,27 @@ def setup_mock_db():
 
 client = TestClient(app, raise_server_exceptions=True)
 OCCURRED_AT = datetime(2026, 5, 13, 10, tzinfo=UTC)
+RESERVATION_ID = deterministic_uuid_string("notification-service-test", "reservation", 1)
+RESERVATION_2_ID = deterministic_uuid_string("notification-service-test", "reservation", 2)
+RESERVATION_VALID_ID = deterministic_uuid_string("notification-service-test", "reservation", "valid")
+RESERVATION_INVALID_ID = deterministic_uuid_string("notification-service-test", "reservation", "invalid")
+PAYMENT_ID = deterministic_uuid_string("notification-service-test", "payment", 1)
+PAYMENT_2_ID = deterministic_uuid_string("notification-service-test", "payment", 2)
+TICKET_ID = deterministic_uuid_string("notification-service-test", "ticket", 1)
+CONCERT_ID = deterministic_uuid_string("notification-service-test", "concert", 1)
+SEAT_ID = deterministic_uuid_string("notification-service-test", "seat", 1)
 
 
 # ── 이벤트 픽스처 ──────────────────────────────────────────────
 
 def reservation_created_event(user_id: str, source_id: str) -> dict:
     return ReservationCreatedEvent(
-        eventId="event-reservation-1",
+        eventId=deterministic_uuid_string("notification-service-test", "event", "reservation-created", 1),
         userId=user_id,
         sourceId=source_id,
         reservationId=source_id,
-        concertId="concert-1",
-        seatId="seat-1",
+        concertId=CONCERT_ID,
+        seatId=SEAT_ID,
         occurredAt=OCCURRED_AT,
         producer="reservation-service",
         correlationId="corr-1",
@@ -55,12 +69,12 @@ def reservation_created_event(user_id: str, source_id: str) -> dict:
 
 def reservation_expired_event(user_id: str, source_id: str) -> dict:
     return ReservationExpiredEvent(
-        eventId="event-expired-1",
+        eventId=deterministic_uuid_string("notification-service-test", "event", "reservation-expired", 1),
         userId=user_id,
         sourceId=source_id,
         reservationId=source_id,
-        concertId="concert-1",
-        seatId="seat-1",
+        concertId=CONCERT_ID,
+        seatId=SEAT_ID,
         occurredAt=OCCURRED_AT,
         producer="reservation-service",
         correlationId="corr-2",
@@ -69,13 +83,13 @@ def reservation_expired_event(user_id: str, source_id: str) -> dict:
 
 def payment_approved_event(user_id: str, source_id: str) -> dict:
     return PaymentApprovedEvent(
-        eventId="event-payment-approved-1",
+        eventId=deterministic_uuid_string("notification-service-test", "event", "payment-approved", 1),
         userId=user_id,
         sourceId=source_id,
         paymentId=source_id,
-        reservationId="reservation-1",
-        concertId="concert-1",
-        seatId="seat-1",
+        reservationId=RESERVATION_ID,
+        concertId=CONCERT_ID,
+        seatId=SEAT_ID,
         amount=50000,
         occurredAt=OCCURRED_AT,
         producer="payment-service",
@@ -85,13 +99,13 @@ def payment_approved_event(user_id: str, source_id: str) -> dict:
 
 def payment_failed_event(user_id: str, source_id: str) -> dict:
     return PaymentFailedEvent(
-        eventId="event-payment-failed-1",
+        eventId=deterministic_uuid_string("notification-service-test", "event", "payment-failed", 1),
         userId=user_id,
         sourceId=source_id,
         paymentId=source_id,
-        reservationId="reservation-1",
-        concertId="concert-1",
-        seatId="seat-1",
+        reservationId=RESERVATION_ID,
+        concertId=CONCERT_ID,
+        seatId=SEAT_ID,
         amount=50000,
         occurredAt=OCCURRED_AT,
         producer="payment-service",
@@ -101,13 +115,13 @@ def payment_failed_event(user_id: str, source_id: str) -> dict:
 
 def ticket_issued_event(user_id: str, source_id: str) -> dict:
     return TicketIssuedEvent(
-        eventId="event-ticket-1",
+        eventId=deterministic_uuid_string("notification-service-test", "event", "ticket-issued", 1),
         userId=user_id,
         sourceId=source_id,
         ticketId=source_id,
-        reservationId="reservation-1",
-        concertId="concert-1",
-        seatId="seat-1",
+        reservationId=RESERVATION_ID,
+        concertId=CONCERT_ID,
+        seatId=SEAT_ID,
         occurredAt=OCCURRED_AT,
         producer="ticket-service",
         correlationId="corr-5",
@@ -124,7 +138,7 @@ def test_reservation_created_event_creates_notification() -> None:
     import asyncio
     db = database.client["notification_db"]
     notification = asyncio.get_event_loop().run_until_complete(
-        handle_business_event(db, reservation_created_event(user_id="1", source_id="reservation-1"))
+        handle_business_event(db, reservation_created_event(user_id="1", source_id=RESERVATION_ID))
     )
 
     assert notification["userId"] == "1"
@@ -136,7 +150,7 @@ def test_reservation_expired_event_creates_notification() -> None:
     import asyncio
     db = database.client["notification_db"]
     notification = asyncio.get_event_loop().run_until_complete(
-        handle_business_event(db, reservation_expired_event(user_id="1", source_id="reservation-1"))
+        handle_business_event(db, reservation_expired_event(user_id="1", source_id=RESERVATION_ID))
     )
 
     assert notification["userId"] == "1"
@@ -148,7 +162,7 @@ def test_payment_approved_event_creates_notification() -> None:
     import asyncio
     db = database.client["notification_db"]
     notification = asyncio.get_event_loop().run_until_complete(
-        handle_business_event(db, payment_approved_event(user_id="1", source_id="payment-1"))
+        handle_business_event(db, payment_approved_event(user_id="1", source_id=PAYMENT_ID))
     )
 
     assert notification["userId"] == "1"
@@ -160,7 +174,7 @@ def test_payment_failed_event_creates_notification() -> None:
     import asyncio
     db = database.client["notification_db"]
     notification = asyncio.get_event_loop().run_until_complete(
-        handle_business_event(db, payment_failed_event(user_id="1", source_id="payment-1"))
+        handle_business_event(db, payment_failed_event(user_id="1", source_id=PAYMENT_ID))
     )
 
     assert notification["userId"] == "1"
@@ -172,7 +186,7 @@ def test_ticket_issued_event_creates_notification() -> None:
     import asyncio
     db = database.client["notification_db"]
     notification = asyncio.get_event_loop().run_until_complete(
-        handle_business_event(db, ticket_issued_event(user_id="1", source_id="ticket-1"))
+        handle_business_event(db, ticket_issued_event(user_id="1", source_id=TICKET_ID))
     )
 
     assert notification["userId"] == "1"
@@ -185,10 +199,10 @@ def test_duplicate_event_id_returns_existing_notification() -> None:
     db = database.client["notification_db"]
     loop = asyncio.get_event_loop()
     first = loop.run_until_complete(
-        handle_business_event(db, reservation_created_event(user_id="1", source_id="reservation-1"))
+        handle_business_event(db, reservation_created_event(user_id="1", source_id=RESERVATION_ID))
     )
     second = loop.run_until_complete(
-        handle_business_event(db, reservation_created_event(user_id="1", source_id="reservation-1"))
+        handle_business_event(db, reservation_created_event(user_id="1", source_id=RESERVATION_ID))
     )
     count = loop.run_until_complete(db["notifications"].count_documents({}))
 
@@ -215,18 +229,18 @@ def test_consumer_skips_invalid_event_and_continues(monkeypatch: pytest.MonkeyPa
     import asyncio
 
     invalid_event = {
-        "eventId": "event-invalid-user-id",
+        "eventId": deterministic_uuid_string("notification-service-test", "event", "invalid-user-id"),
         "eventType": "reservation-created",
         "userId": 2,
-        "sourceId": "reservation-invalid",
-        "reservationId": "reservation-invalid",
-        "concertId": "concert-1",
-        "seatId": "seat-1",
+        "sourceId": RESERVATION_INVALID_ID,
+        "reservationId": RESERVATION_INVALID_ID,
+        "concertId": CONCERT_ID,
+        "seatId": SEAT_ID,
         "occurredAt": OCCURRED_AT.isoformat().replace("+00:00", "Z"),
         "producer": "reservation-service",
         "correlationId": "corr-invalid",
     }
-    valid_event = reservation_created_event(user_id="1", source_id="reservation-valid")
+    valid_event = reservation_created_event(user_id="1", source_id=RESERVATION_VALID_ID)
     fake_consumer = FakeConsumer(
         [
             FakeMessage(topic="reservation-created", value=invalid_event, offset=1),
@@ -247,7 +261,7 @@ def test_consumer_skips_invalid_event_and_continues(monkeypatch: pytest.MonkeyPa
     notifications = asyncio.get_event_loop().run_until_complete(db["notifications"].find().to_list(None))
     assert fake_consumer.commit_count == 2
     assert fake_consumer.stopped is True
-    assert [doc["source_id"] for doc in notifications] == ["reservation-valid"]
+    assert [doc["source_id"] for doc in notifications] == [RESERVATION_VALID_ID]
 
 
 def test_user_can_list_only_own_notifications() -> None:
@@ -255,9 +269,80 @@ def test_user_can_list_only_own_notifications() -> None:
     response = client.get("/notifications", headers=user_headers(1))
 
     assert response.status_code == 200
-    assert all(item["userId"] == "1" for item in response.json())
+    body = response.json()
+    assert all(item["userId"] == "1" for item in body["items"])
+    assert body["page"] == {"nextCursor": None, "hasMore": False, "limit": 20}
     metrics = client.get("/metrics").text
     assert_metric_labels(metrics, "notification_reads_total", result="success", route_kind="list")
+
+
+def test_list_notifications_applies_limit_and_returns_next_cursor() -> None:
+    inserted_ids = _insert_notifications_for_user("1", 3)
+
+    response = client.get("/notifications?limit=2", headers=user_headers(1))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["id"] for item in body["items"]] == [inserted_ids[2], inserted_ids[1]]
+    assert body["page"] == {"nextCursor": inserted_ids[1], "hasMore": True, "limit": 2}
+
+
+def test_list_notifications_uses_cursor_for_next_page() -> None:
+    inserted_ids = _insert_notifications_for_user("1", 3)
+    first_page = client.get("/notifications?limit=2", headers=user_headers(1)).json()
+
+    response = client.get(
+        f"/notifications?limit=2&cursor={first_page['page']['nextCursor']}",
+        headers=user_headers(1),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["id"] for item in body["items"]] == [inserted_ids[0]]
+    assert body["page"] == {"nextCursor": None, "hasMore": False, "limit": 2}
+
+
+def test_list_notifications_does_not_mix_other_user_notifications() -> None:
+    user_one_ids = _insert_notifications_for_user("1", 2)
+    _insert_notifications_for_user("99", 3)
+
+    response = client.get("/notifications?limit=10", headers=user_headers(1))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["id"] for item in body["items"]] == [user_one_ids[1], user_one_ids[0]]
+    assert {item["userId"] for item in body["items"]} == {"1"}
+    assert body["page"]["hasMore"] is False
+
+
+def test_list_notifications_rejects_invalid_cursor() -> None:
+    response = client.get("/notifications?cursor=not-an-object-id", headers=user_headers(1))
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid notification cursor"
+    metrics = client.get("/metrics").text
+    assert_metric_labels(metrics, "notification_reads_total", result="rejection", route_kind="list")
+
+
+def test_ensure_indexes_creates_notification_and_processed_event_indexes() -> None:
+    import asyncio
+
+    db = database.client["notification_db"]
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(database.ensure_indexes())
+
+    notification_indexes = {
+        index["name"]: index
+        for index in loop.run_until_complete(db["notifications"].list_indexes().to_list(None))
+    }
+    processed_event_indexes = {
+        index["name"]: index
+        for index in loop.run_until_complete(db["processed_events"].list_indexes().to_list(None))
+    }
+
+    assert notification_indexes["user_id_1__id_-1"]["key"] == {"user_id": 1, "_id": -1}
+    assert processed_event_indexes["event_id_1"]["key"] == {"event_id": 1}
+    assert processed_event_indexes["event_id_1"]["unique"] is True
 
 
 def test_user_cannot_read_other_user_notification() -> None:
@@ -265,7 +350,7 @@ def test_user_cannot_read_other_user_notification() -> None:
     db = database.client["notification_db"]
     loop = asyncio.get_event_loop()
     loop.run_until_complete(
-        handle_business_event(db, reservation_created_event(user_id="2", source_id="reservation-2"))
+        handle_business_event(db, reservation_created_event(user_id="2", source_id=RESERVATION_2_ID))
     )
     notifications = loop.run_until_complete(db["notifications"].find().to_list(None))
     other_id = str(notifications[0]["_id"])
@@ -282,7 +367,25 @@ def test_healthz() -> None:
     assert response.json()["status"] == "ok"
 
 
-def test_lifespan_awaits_consumer_before_closing_db(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_lifespan_connects_and_closes_db_without_consumer(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    async def fake_connect_db() -> None:
+        calls.append("connect")
+
+    def fake_close_db() -> None:
+        calls.append("close")
+
+    monkeypatch.setattr(app_main, "connect_db", fake_connect_db)
+    monkeypatch.setattr(app_main, "close_db", fake_close_db)
+
+    with TestClient(app):
+        pass
+
+    assert calls == ["connect", "close"]
+
+
+def test_worker_awaits_consumer_before_closing_db(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
 
     async def fake_connect_db() -> None:
@@ -290,24 +393,27 @@ def test_lifespan_awaits_consumer_before_closing_db(monkeypatch: pytest.MonkeyPa
 
     async def fake_consume_events(stop_event) -> None:
         calls.append("consumer-start")
-        await stop_event.wait()
-        calls.append("consumer-stopped")
+        stop_event.set()
 
     def fake_close_db() -> None:
         calls.append("close")
 
-    monkeypatch.setattr(app_main, "connect_db", fake_connect_db)
-    monkeypatch.setattr(app_main, "consume_events", fake_consume_events)
-    monkeypatch.setattr(app_main, "close_db", fake_close_db)
+    monkeypatch.setattr(worker_module, "_install_signal_handlers", lambda stop_event: None)
+    monkeypatch.setattr(
+        worker_module,
+        "configure_worker_observability",
+        lambda config: calls.append(("observability", config.service_name)),
+    )
+    monkeypatch.setattr(worker_module, "connect_db", fake_connect_db)
+    monkeypatch.setattr(worker_module, "consume_events", fake_consume_events)
+    monkeypatch.setattr(worker_module, "close_db", fake_close_db)
 
-    with TestClient(app):
-        assert app.state.consumer_task is not None
+    asyncio.run(worker_module.run_worker())
 
-    assert app.state.consumer_task is None
-    assert calls == ["connect", "consumer-start", "consumer-stopped", "close"]
+    assert calls == [("observability", "notification-service"), "connect", "consumer-start", "close"]
 
 
-def test_lifespan_cancels_consumer_after_shutdown_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_worker_cancels_consumer_after_shutdown_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
 
     async def fake_connect_db() -> None:
@@ -324,17 +430,16 @@ def test_lifespan_cancels_consumer_after_shutdown_timeout(monkeypatch: pytest.Mo
     def fake_close_db() -> None:
         calls.append("close")
 
-    monkeypatch.setattr(app_main, "_BACKGROUND_TASK_SHUTDOWN_TIMEOUT_SECONDS", 0.01)
-    monkeypatch.setattr(app_main, "connect_db", fake_connect_db)
-    monkeypatch.setattr(app_main, "consume_events", fake_consume_events)
-    monkeypatch.setattr(app_main, "close_db", fake_close_db)
+    monkeypatch.setattr(worker_module, "_BACKGROUND_TASK_SHUTDOWN_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(worker_module, "_install_signal_handlers", lambda stop_event: stop_event.set())
+    monkeypatch.setattr(worker_module, "configure_worker_observability", lambda config: calls.append("observability"))
+    monkeypatch.setattr(worker_module, "connect_db", fake_connect_db)
+    monkeypatch.setattr(worker_module, "consume_events", fake_consume_events)
+    monkeypatch.setattr(worker_module, "close_db", fake_close_db)
 
-    with TestClient(app):
-        assert app.state.consumer_task is not None
+    asyncio.run(worker_module.run_worker())
 
-    assert app.state.consumer_task is None
-    assert app.state.consumer_stop_event is None
-    assert calls == ["connect", "consumer-start", "consumer-cancelled", "close"]
+    assert calls == ["observability", "connect", "consumer-start", "consumer-cancelled", "close"]
 
 
 def test_readyz() -> None:
@@ -366,11 +471,37 @@ def _seed_notifications() -> None:
     db = database.client["notification_db"]
     loop = asyncio.get_event_loop()
     loop.run_until_complete(
-        handle_business_event(db, reservation_created_event(user_id="1", source_id="reservation-1"))
+        handle_business_event(db, reservation_created_event(user_id="1", source_id=RESERVATION_ID))
     )
     loop.run_until_complete(
-        handle_business_event(db, payment_approved_event(user_id="2", source_id="payment-2"))
+        handle_business_event(db, payment_approved_event(user_id="2", source_id=PAYMENT_2_ID))
     )
+
+
+def _insert_notifications_for_user(user_id: str, count: int) -> list[str]:
+    import asyncio
+
+    db = database.client["notification_db"]
+    loop = asyncio.get_event_loop()
+    inserted_ids: list[str] = []
+    for index in range(count):
+        notification_id = ObjectId()
+        loop.run_until_complete(
+            db["notifications"].insert_one(
+                {
+                    "_id": notification_id,
+                    "user_id": user_id,
+                    "type": "reservation-created",
+                    "message": f"notification {index}",
+                    "status": "CREATED",
+                    "source_id": deterministic_uuid_string("notification-service-test", "notification-source", user_id, index),
+                    "metadata": {},
+                    "created_at": OCCURRED_AT,
+                }
+            )
+        )
+        inserted_ids.append(str(notification_id))
+    return inserted_ids
 
 
 def assert_metric_labels(metrics: str, metric_name: str, **labels: str) -> None:

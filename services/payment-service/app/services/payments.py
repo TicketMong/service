@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from uuid import uuid4
 
 from fastapi import HTTPException, status
 from observability import TraceContext
+from server.ids import new_uuid_v7_string
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -74,7 +74,7 @@ class PaymentService:
 
             # 결제 레코드는 이벤트 payload 생성 전 DB 세션에 먼저 올린다.
             payment = Payment(
-                id=f"pay-{uuid4()}",
+                id=new_uuid_v7_string(),
                 reservation_id=request_body.reservationId,
                 concert_id=request_body.concertId,
                 user_id=user.user_id,
@@ -135,15 +135,13 @@ class PaymentService:
     def settlement_for_concert(self, concert_id: str) -> SettlementBasisResponse:
         """공연별 승인 결제를 집계해 정산 기준 값을 만든다."""
         # 정산 기준은 승인된 결제만 집계한다.
-        gross_amount = (
-            self._db.query(func.coalesce(func.sum(Payment.amount), 0))
+        gross_amount, ticket_count = (
+            self._db.query(
+                func.coalesce(func.sum(Payment.amount), 0),
+                func.count(),
+            )
             .filter(Payment.concert_id == concert_id, Payment.status == "approved")
-            .scalar()
-        )
-        ticket_count = (
-            self._db.query(func.count(Payment.id))
-            .filter(Payment.concert_id == concert_id, Payment.status == "approved")
-            .scalar()
+            .one()
         )
         gross = int(gross_amount or 0)
         count = int(ticket_count or 0)

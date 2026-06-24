@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
-from uuid import uuid4
 
+from server.ids import new_uuid_v7_string
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -16,8 +16,8 @@ def now_utc() -> datetime:
     return datetime.now(UTC)
 
 
-def new_id(prefix: str) -> str:
-    return f"{prefix}-{uuid4().hex[:16]}"
+def new_id() -> str:
+    return new_uuid_v7_string()
 
 
 class ReservationDomainService:

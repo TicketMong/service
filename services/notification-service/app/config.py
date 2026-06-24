@@ -12,6 +12,8 @@ from observability import ObservabilityConfig, observability_config_from_env
 
 class Settings:
     service_name = "notification-service"
+    port = int(os.getenv("PORT", "8084"))
+    uvicorn_workers = int(os.getenv("UVICORN_WORKERS", "2"))
     mongodb_url = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
     mongodb_db_name = os.getenv("MONGODB_DB_NAME", "notification_db")
     kafka_bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "")

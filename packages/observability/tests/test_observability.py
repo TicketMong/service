@@ -4,6 +4,7 @@ import json
 import logging
 import sys
 import types
+from uuid import UUID, uuid5
 
 from errors import in_domain
 from fastapi import FastAPI
@@ -37,6 +38,7 @@ from observability import (
     TraceContext,
     capture_current_trace_context,
     configure_process_logging,
+    configure_process_observability,
     configure_process_profiling,
     configure_process_tracing,
     create_request_log_middleware,
@@ -50,9 +52,14 @@ from observability import (
     start_trace_span,
     trace_recorder,
 )
+from observability import process as process_module
 from observability import profiling as profiling_module
 from observability import tracing as tracing_module
 from observability.tracing import _otlp_trace_export_enabled
+
+
+TEST_UUID_NAMESPACE = UUID("018f0d5b-8e30-7a60-9bf1-91b6d979d3c0")
+SEAT_ID = str(uuid5(TEST_UUID_NAMESPACE, "observability-test:seat:1"))
 
 
 def test_observability_config_from_env_maps_explicit_otel_settings() -> None:
@@ -252,6 +259,32 @@ def test_configure_process_profiling_requires_server_address(monkeypatch) -> Non
                 profiling=ProfilingConfig(enabled=True),
             )
         )
+
+
+def test_configure_process_observability_wires_process_level_hooks(monkeypatch) -> None:
+    calls: list[tuple[str, str | None]] = []
+
+    def fake_configure_process_logging() -> None:
+        calls.append(("logging", None))
+
+    def fake_configure_process_profiling(config: ObservabilityConfig) -> bool:
+        calls.append(("profiling", config.service_name))
+        return True
+
+    def fake_configure_process_tracing(config: ObservabilityConfig) -> None:
+        calls.append(("tracing", config.service_name))
+
+    monkeypatch.setattr(process_module, "configure_process_logging", fake_configure_process_logging)
+    monkeypatch.setattr(process_module, "configure_process_profiling", fake_configure_process_profiling)
+    monkeypatch.setattr(process_module, "configure_process_tracing", fake_configure_process_tracing)
+
+    configure_process_observability(ObservabilityConfig(service_name="worker-service"))
+
+    assert calls == [
+        ("logging", None),
+        ("profiling", "worker-service"),
+        ("tracing", "worker-service"),
+    ]
 
 
 def test_instrument_fastapi_app_passes_configured_excluded_urls(monkeypatch) -> None:
@@ -887,13 +920,13 @@ def test_request_observability_marks_slow_requests_for_collector_policy(caplog, 
 
 def test_error_context_reads_errors_package_context() -> None:
     exc = RuntimeError("seat already reserved")
-    in_domain("reservation").code("reservation.conflict").with_attr("seat_id", "seat-A1").attach(exc)
+    in_domain("reservation").code("reservation.conflict").with_attr("seat_id", SEAT_ID).attach(exc)
 
     context = error_context_module.extract_error_context(exc)
 
     assert context["error.code"] == "reservation.conflict"
     assert context["error.domain"] == "reservation"
-    assert context["error.attr.seat_id"] == "seat-A1"
+    assert context["error.attr.seat_id"] == SEAT_ID
     assert context["error.occurred_at"]
 
 

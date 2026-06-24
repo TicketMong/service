@@ -2,7 +2,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import APIRouter, Body, Depends, FastAPI, Header, HTTPException, Request, status
 from observability import TraceRecorder, register_error_handlers, trace_recorder
 from prometheus_client import CollectorRegistry
 from sqlalchemy.orm import Session
@@ -28,29 +28,18 @@ from app.schemas import (
     TokenResponse,
     UserResponse,
 )
-from app.security import decode_access_token, hash_refresh_token, verify_password
+from app.security import decode_access_token, hash_refresh_token, password_hash_metadata, verify_password
 from app.seed import DEMO_USERS, seed_demo_users
 from app.token_response import issue_token_response
 
 
-models.Base.metadata.create_all(bind=engine)
-with SessionLocal() as seed_db:
-    seed_demo_users(seed_db)
-
 auth_metrics = AuthTelemetryRecorder()
+router = APIRouter()
 
 
 def _password_hash_attributes(password_hash: str) -> dict[str, str | int]:
     """Trace에 안전하게 남길 수 있는 password hash metadata만 추출한다."""
-    try:
-        scheme, iterations, _salt_b64, _digest_b64 = password_hash.split("$", 3)
-    except ValueError:
-        return {"auth.password.scheme": "unknown"}
-
-    attributes: dict[str, str | int] = {"auth.password.scheme": scheme}
-    if iterations.isdigit():
-        attributes["auth.password.iterations"] = int(iterations)
-    return attributes
+    return password_hash_metadata(password_hash)
 
 
 def _verify_password_with_trace(
@@ -83,36 +72,42 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         engine.dispose()
 
 
-observability_config = settings.observability_config()
-app = FastAPI(title=settings.service_name, lifespan=lifespan)
-configure_app_observability(app, observability_config)
-register_error_handlers(
-    app,
-    service_name=settings.service_name,
-    domain="auth",
-    http_error_code_for_status=lambda status_code: _error_code_for_status(status_code),
-)
-register_operational_handlers(
-    app,
-    service_name=settings.service_name,
-    service_version=observability_config.service_version,
-    service_environment=observability_config.service_environment,
-    readiness_checks={"database": sqlalchemy_readiness_check(engine)},
-    configure_metrics=lambda registry: _configure_auth_service_metrics(
-        registry,
+def create_app() -> FastAPI:
+    models.Base.metadata.create_all(bind=engine)
+    with SessionLocal() as seed_db:
+        seed_demo_users(seed_db)
+    observability_config = settings.observability_config()
+    app = FastAPI(title=settings.service_name, lifespan=lifespan)
+    configure_app_observability(app, observability_config)
+    register_error_handlers(
+        app,
+        service_name=settings.service_name,
+        domain="auth",
+        http_error_code_for_status=lambda status_code: _error_code_for_status(status_code),
+    )
+    register_operational_handlers(
+        app,
+        service_name=settings.service_name,
+        service_version=observability_config.service_version,
         service_environment=observability_config.service_environment,
-    ),
-    include_timestamp=True,
-)
-app.include_router(signup_router)
+        readiness_checks={"database": sqlalchemy_readiness_check(engine)},
+        configure_metrics=lambda registry: _configure_auth_service_metrics(
+            registry,
+            service_environment=observability_config.service_environment,
+        ),
+        include_timestamp=True,
+    )
+    app.include_router(signup_router)
+    app.include_router(router)
+    return app
 
 
-@app.get("/health")
+@router.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": settings.service_name}
 
 
-@app.post("/auth/login", response_model=TokenResponse)
+@router.post("/auth/login", response_model=TokenResponse)
 def login(request_body: LoginRequest, request: Request, db: Session = Depends(get_db)) -> TokenResponse:
     """로그인 allow/deny 결과를 metric으로 남긴다."""
     attempt = auth_metrics.start_attempt(AuthAction.LOGIN)
@@ -142,7 +137,7 @@ def login(request_body: LoginRequest, request: Request, db: Session = Depends(ge
         attempt.record()
 
 
-@app.get("/auth/demo-accounts", response_model=list[DemoAccountResponse])
+@router.get("/auth/demo-accounts", response_model=list[DemoAccountResponse])
 def demo_accounts() -> list[DemoAccountResponse]:
     if not settings.expose_demo_accounts:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Demo accounts are disabled")
@@ -157,7 +152,7 @@ def demo_accounts() -> list[DemoAccountResponse]:
     ]
 
 
-@app.get("/auth/me", response_model=UserResponse)
+@router.get("/auth/me", response_model=UserResponse)
 def me(
     request: Request,
     authorization: str | None = Header(default=None, alias="Authorization"),
@@ -178,7 +173,7 @@ def me(
         attempt.record()
 
 
-@app.post("/auth/refresh", response_model=TokenResponse)
+@router.post("/auth/refresh", response_model=TokenResponse)
 def refresh_token(
     request_body: RefreshTokenRequest,
     request: Request,
@@ -213,7 +208,7 @@ def refresh_token(
         attempt.record()
 
 
-@app.post("/auth/logout")
+@router.post("/auth/logout")
 def logout(
     request: Request,
     request_body: LogoutRequest | None = Body(default=None),
@@ -245,7 +240,7 @@ def logout(
         attempt.record()
 
 
-@app.get("/auth/audit-logs", response_model=list[AuditLogResponse])
+@router.get("/auth/audit-logs", response_model=list[AuditLogResponse])
 def audit_logs(
     request: Request,
     authorization: str | None = Header(default=None, alias="Authorization"),

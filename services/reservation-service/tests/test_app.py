@@ -4,11 +4,17 @@ from contextlib import contextmanager
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
+from server.ids import deterministic_uuid_string
 
 from app.consumers import kafka_consumer as kafka_consumer_module
 from app import main as app_main
+from app import worker as worker_module
 from app.config import Settings
 from app.main import create_app
+
+
+def uuid_id(*parts: object) -> str:
+    return deterministic_uuid_string("reservation-app-test", *parts)
 
 
 def test_create_app_returns_fastapi_app() -> None:
@@ -57,6 +63,62 @@ def test_kafka_producer_is_created_inside_lifespan(monkeypatch: MonkeyPatch) -> 
     assert created[0].stopped is True
     assert app.state.kafka_producer is None
     assert calls == ["producer-start", "producer-stop", "dispose"]
+
+
+def test_worker_awaits_ticket_issued_consumer_and_disposes_engine(monkeypatch: MonkeyPatch) -> None:
+    calls: list[object] = []
+
+    async def fake_consume_ticket_issued(stop_event: asyncio.Event, **kwargs: object) -> None:
+        calls.append(("consumer-start", kwargs["topic"], kwargs["session_factory"]))
+        stop_event.set()
+
+    monkeypatch.setattr(worker_module, "_install_signal_handlers", lambda stop_event: None)
+    monkeypatch.setattr(
+        worker_module,
+        "configure_worker_observability",
+        lambda config: calls.append(("observability", config.service_name)),
+    )
+    monkeypatch.setattr(worker_module, "init_db", lambda: calls.append("init-db"))
+    monkeypatch.setattr(worker_module, "consume_ticket_issued", fake_consume_ticket_issued)
+    monkeypatch.setattr(worker_module.engine, "dispose", lambda: calls.append("dispose"))
+
+    asyncio.run(worker_module.run_worker())
+
+    assert calls == [
+        ("observability", "reservation-service"),
+        "init-db",
+        ("consumer-start", "ticket-issued", worker_module.SessionLocal),
+        "dispose",
+    ]
+
+
+def test_worker_cancels_ticket_issued_consumer_after_shutdown_timeout(monkeypatch: MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    async def fake_consume_ticket_issued(stop_event: asyncio.Event, **kwargs: object) -> None:
+        calls.append("consumer-start")
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            calls.append("consumer-cancelled")
+            raise
+
+    monkeypatch.setattr(worker_module, "_BACKGROUND_TASK_SHUTDOWN_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(worker_module, "_install_signal_handlers", lambda stop_event: stop_event.set())
+    monkeypatch.setattr(worker_module, "configure_worker_observability", lambda config: calls.append("observability"))
+    monkeypatch.setattr(worker_module, "init_db", lambda: calls.append("init-db"))
+    monkeypatch.setattr(worker_module, "consume_ticket_issued", fake_consume_ticket_issued)
+    monkeypatch.setattr(worker_module.engine, "dispose", lambda: calls.append("dispose"))
+
+    asyncio.run(worker_module.run_worker())
+
+    assert calls == [
+        "observability",
+        "init-db",
+        "consumer-start",
+        "consumer-cancelled",
+        "dispose",
+    ]
 
 
 def test_health_returns_service_status() -> None:
@@ -160,6 +222,7 @@ def test_ticket_issued_consumer_passes_trace_headers_to_consumer_span(monkeypatc
     ]
     observed_headers: list[list[tuple[str, bytes]]] = []
     confirmed_reservations: list[str] = []
+    reservation_id = uuid_id("reservation", "trace")
 
     @contextmanager
     def fake_start_consumer_span(message: FakeMessage):
@@ -180,7 +243,7 @@ def test_ticket_issued_consumer_passes_trace_headers_to_consumer_span(monkeypatc
             messages=[
                 FakeMessage(
                     "ticket-issued",
-                    {"eventType": "ticket-issued", "reservationId": "rsv-trace"},
+                    {"eventType": "ticket-issued", "reservationId": reservation_id},
                     headers=trace_headers,
                 )
             ],
@@ -204,7 +267,7 @@ def test_ticket_issued_consumer_passes_trace_headers_to_consumer_span(monkeypatc
     )
 
     assert observed_headers == [trace_headers]
-    assert confirmed_reservations == ["rsv-trace"]
+    assert confirmed_reservations == [reservation_id]
 
 
 class FakeMessage:

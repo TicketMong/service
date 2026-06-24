@@ -6,6 +6,7 @@ import asyncio
 import pytest
 from fastapi.testclient import TestClient
 from kafka_utils import KafkaProducerOption
+from server.ids import deterministic_uuid_string
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -17,10 +18,24 @@ from app.consumers import kafka_consumer as kafka_consumer_module
 from app.consumers.kafka_consumer import consume_events
 from app.database import Base, get_db
 from app.kafka import get_kafka_producer
-from app.main import app
+from app.main import create_app
 import app.main as main_module
 from app.routers import tickets as tickets_router_module
 from app.services import ticket_service
+import app.worker as worker_module
+
+
+app = create_app()
+
+RESERVATION_ID = deterministic_uuid_string("ticket-service-test", "reservation", 1)
+CONCERT_ID = deterministic_uuid_string("ticket-service-test", "concert", 1)
+SEAT_ID = deterministic_uuid_string("ticket-service-test", "seat", 1)
+PAYMENT_ID = deterministic_uuid_string("ticket-service-test", "payment", 1)
+PAYMENT_APPROVED_EVENT_ID = deterministic_uuid_string("ticket-service-test", "payment-approved-event", 1)
+
+
+def make_test_uuid(*parts: object) -> str:
+    return deterministic_uuid_string("ticket-service-test", *parts)
 
 
 engine = create_engine(
@@ -60,7 +75,7 @@ def test_issue_ticket_creates_ticket(monkeypatch: pytest.MonkeyPatch) -> None:
     response = client.post("/tickets/issue", json=ticket_issue_request())
 
     assert response.status_code == 200
-    assert response.json()["reservationId"] == "reservation-1"
+    assert response.json()["reservationId"] == RESERVATION_ID
     assert response.json()["status"] == "ISSUED"
 
 
@@ -87,8 +102,8 @@ def test_issue_ticket_publishes_ticket_issued_event(monkeypatch: pytest.MonkeyPa
     assert producer.sent[0][0] == "ticket-issued"
     assert producer.sent[0][1]["eventType"] == "ticket-issued"
     assert producer.sent[0][1]["ticketId"] == str(producer.sent[0][1]["sourceId"])
-    assert producer.sent[0][1]["concertId"] == "concert-1"
-    assert producer.sent[0][1]["seatId"] == "seat-A1"
+    assert producer.sent[0][1]["concertId"] == CONCERT_ID
+    assert producer.sent[0][1]["seatId"] == SEAT_ID
 
 
 def test_user_can_get_own_ticket(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -327,7 +342,7 @@ def test_payment_approved_event_issues_ticket(monkeypatch: pytest.MonkeyPatch) -
     from app.models import Ticket
     ticket = db.query(Ticket).first()
     assert ticket is not None
-    assert ticket.reservation_id == "reservation-1"
+    assert ticket.reservation_id == RESERVATION_ID
     assert producer.sent[0][2] == []
     assert producer.options_sent[0].correlation_id == "corr-1"
     metrics = client.get("/metrics").text
@@ -373,29 +388,27 @@ def test_kafka_event_handlers_bind_topic_outside_consumer(monkeypatch: pytest.Mo
         async def __call__(self, payload: dict) -> None:
             calls.append(("call", payload, None))
 
-    monkeypatch.setattr(main_module, "PaymentApprovedEventHandler", FakePaymentApprovedEventHandler)
+    monkeypatch.setattr(worker_module, "PaymentApprovedEventHandler", FakePaymentApprovedEventHandler)
     producer = FakeKafkaProducer()
-    handlers = main_module.kafka_event_handlers(producer)
+    handlers = worker_module.kafka_event_handlers(producer)
     payload = payment_approved_event()
     asyncio.run(handlers["payment-approved"](payload))
 
     assert list(handlers) == ["payment-approved"]
     assert calls == [
-        ("init", main_module.SessionLocal, producer),
+        ("init", worker_module.SessionLocal, producer),
         ("call", payload, None),
     ]
 
 
-def test_lifespan_creates_producer_awaits_consumer_and_disposes_engine(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[object] = []
+def test_lifespan_creates_producer_and_disposes_engine_without_consumer(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
 
     class LifespanKafkaProducer:
         def __init__(self) -> None:
-            self.started = False
             self.stopped = False
 
         async def start(self) -> None:
-            self.started = True
             calls.append("producer-start")
 
         async def stop(self) -> None:
@@ -408,13 +421,7 @@ def test_lifespan_creates_producer_awaits_consumer_and_disposes_engine(monkeypat
         calls.append("create-producer")
         return producer
 
-    async def fake_consume_events(stop_event: asyncio.Event, **kwargs: object) -> None:
-        calls.append(("consumer-producer-started", producer.started, list(kwargs["handlers"])))
-        await stop_event.wait()
-        calls.append("consumer-stopped")
-
     monkeypatch.setattr(main_module, "create_producer", fake_create_producer)
-    monkeypatch.setattr(main_module, "consume_events", fake_consume_events)
     monkeypatch.setattr(main_module.engine, "dispose", lambda: calls.append("dispose"))
 
     assert app.state.kafka_producer is None
@@ -427,17 +434,66 @@ def test_lifespan_creates_producer_awaits_consumer_and_disposes_engine(monkeypat
     assert calls == [
         "create-producer",
         "producer-start",
-        ("consumer-producer-started", True, ["payment-approved"]),
-        "consumer-stopped",
         "producer-stop",
         "dispose",
     ]
 
 
-def test_lifespan_cancels_consumer_after_shutdown_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_worker_creates_producer_awaits_consumer_and_disposes_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[object] = []
+
+    class WorkerKafkaProducer:
+        def __init__(self) -> None:
+            self.started = False
+            self.stopped = False
+
+        async def start(self) -> None:
+            self.started = True
+            calls.append("producer-start")
+
+        async def stop(self) -> None:
+            self.stopped = True
+            calls.append("producer-stop")
+
+    producer = WorkerKafkaProducer()
+
+    def fake_create_producer() -> WorkerKafkaProducer:
+        calls.append("create-producer")
+        return producer
+
+    async def fake_consume_events(stop_event: asyncio.Event, **kwargs: object) -> None:
+        calls.append(("consumer-producer-started", producer.started, list(kwargs["handlers"])))
+        stop_event.set()
+
+    monkeypatch.setattr(worker_module, "_install_signal_handlers", lambda stop_event: None)
+    monkeypatch.setattr(
+        worker_module,
+        "configure_worker_observability",
+        lambda config: calls.append(("observability", config.service_name)),
+    )
+    monkeypatch.setattr(worker_module.models.Base.metadata, "create_all", lambda bind: calls.append("create-all"))
+    monkeypatch.setattr(worker_module, "create_producer", fake_create_producer)
+    monkeypatch.setattr(worker_module, "consume_events", fake_consume_events)
+    monkeypatch.setattr(worker_module.engine, "dispose", lambda: calls.append("dispose"))
+
+    asyncio.run(worker_module.run_worker())
+
+    assert producer.stopped is True
+    assert calls == [
+        ("observability", "ticket-service"),
+        "create-all",
+        "create-producer",
+        "producer-start",
+        ("consumer-producer-started", True, ["payment-approved"]),
+        "producer-stop",
+        "dispose",
+    ]
+
+
+def test_worker_cancels_consumer_after_shutdown_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
 
-    class LifespanKafkaProducer:
+    class WorkerKafkaProducer:
         async def start(self) -> None:
             calls.append("producer-start")
 
@@ -452,17 +508,18 @@ def test_lifespan_cancels_consumer_after_shutdown_timeout(monkeypatch: pytest.Mo
             calls.append("consumer-cancelled")
             raise
 
-    monkeypatch.setattr(main_module, "_BACKGROUND_TASK_SHUTDOWN_TIMEOUT_SECONDS", 0.01)
-    monkeypatch.setattr(main_module, "create_producer", lambda: LifespanKafkaProducer())
-    monkeypatch.setattr(main_module, "consume_events", fake_consume_events)
-    monkeypatch.setattr(main_module.engine, "dispose", lambda: calls.append("dispose"))
+    monkeypatch.setattr(worker_module, "_BACKGROUND_TASK_SHUTDOWN_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(worker_module, "_install_signal_handlers", lambda stop_event: stop_event.set())
+    monkeypatch.setattr(worker_module, "configure_worker_observability", lambda config: calls.append("observability"))
+    monkeypatch.setattr(worker_module.models.Base.metadata, "create_all", lambda bind: None)
+    monkeypatch.setattr(worker_module, "create_producer", lambda: WorkerKafkaProducer())
+    monkeypatch.setattr(worker_module, "consume_events", fake_consume_events)
+    monkeypatch.setattr(worker_module.engine, "dispose", lambda: calls.append("dispose"))
 
-    with TestClient(app):
-        assert app.state.consumer_task is not None
+    asyncio.run(worker_module.run_worker())
 
-    assert app.state.consumer_task is None
-    assert app.state.consumer_stop_event is None
     assert calls == [
+        "observability",
         "producer-start",
         "consumer-start",
         "consumer-cancelled",
@@ -599,10 +656,10 @@ def test_metrics_returns_prometheus_format() -> None:
 
 def ticket_issue_request(
     *,
-    reservation_id: str = "reservation-1",
+    reservation_id: str = RESERVATION_ID,
     user_id: str = "1",
-    concert_id: str = "concert-1",
-    seat_id: str = "seat-A1",
+    concert_id: str = CONCERT_ID,
+    seat_id: str = SEAT_ID,
 ) -> dict:
     return {
         "reservationId": reservation_id,
@@ -620,14 +677,14 @@ def ticket_issue_request_model():
 
 def payment_approved_event() -> dict:
     return {
-        "eventId": "event-payment-1",
+        "eventId": PAYMENT_APPROVED_EVENT_ID,
         "eventType": "payment-approved",
         "userId": "1",
-        "sourceId": "payment-1",
-        "reservationId": "reservation-1",
-        "concertId": "concert-1",
-        "seatId": "seat-A1",
-        "paymentId": "payment-1",
+        "sourceId": PAYMENT_ID,
+        "reservationId": RESERVATION_ID,
+        "concertId": CONCERT_ID,
+        "seatId": SEAT_ID,
+        "paymentId": PAYMENT_ID,
         "amount": 50000,
         "occurredAt": "2026-05-13T10:00:00Z",
         "producer": "payment-service",
@@ -652,10 +709,10 @@ def issue_tickets_for_user(monkeypatch: pytest.MonkeyPatch, user_id: str, count:
         tickets.append(client.post(
             "/tickets/issue",
             json=ticket_issue_request(
-                reservation_id=f"reservation-{user_id}-{index}",
+                reservation_id=make_test_uuid("reservation", user_id, index),
                 user_id=user_id,
-                concert_id=f"concert-{index}",
-                seat_id=f"seat-{index}",
+                concert_id=make_test_uuid("concert", index),
+                seat_id=make_test_uuid("seat", index),
             ),
         ).json())
     return tickets

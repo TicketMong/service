@@ -1,9 +1,14 @@
 import pytest
+from server.ids import deterministic_uuid_string
 
 from app import schemas
 from app.services.base import ACTIVE_STATUSES
 from app.services.reservations import concert_id_from_request
 from app.services.serializers import active_seat_key
+
+
+def uuid_id(*parts: object) -> str:
+    return deterministic_uuid_string("reservation-domain-rules-test", *parts)
 
 
 def test_active_seat_key_is_stable_per_performance_and_seat() -> None:
@@ -23,15 +28,13 @@ def test_canceled_and_expired_reservations_are_inactive(status: str) -> None:
     assert status not in ACTIVE_STATUSES
 
 
-def test_concert_id_from_request_prefers_explicit_concert_id() -> None:
-    """요청에 concertId가 있으면 해당 값을 우선 사용하는지 검증한다."""
-    request = schemas.CreateReservationRequest(concertId="concert-1", performanceId="perf-1", seatId="A-1")
+def test_concert_id_from_request_uses_explicit_concert_id() -> None:
+    """요청의 concertId를 그대로 사용하는지 검증한다."""
+    concert_id = uuid_id("concert", 1)
+    request = schemas.CreateReservationRequest(
+        concertId=concert_id,
+        performanceId=uuid_id("performance", 1),
+        seatId=uuid_id("seat", 1),
+    )
 
-    assert concert_id_from_request(request) == "concert-1"
-
-
-def test_concert_id_from_request_derives_default_from_performance_id() -> None:
-    """요청에 concertId가 없으면 performanceId에서 기본 concertId를 만드는지 검증한다."""
-    request = schemas.CreateReservationRequest(performanceId="perf-1", seatId="A-1")
-
-    assert concert_id_from_request(request) == "concert-perf-1"
+    assert concert_id_from_request(request) == concert_id

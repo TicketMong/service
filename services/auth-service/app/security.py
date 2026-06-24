@@ -9,11 +9,46 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from fastapi import HTTPException, status
+from pwdlib import PasswordHash
+from pwdlib.exceptions import UnknownHashError
+from pwdlib.hashers.argon2 import Argon2Hasher
 
 from app.config import settings
 
 
+ARGON2ID_MEMORY_COST_KIB = 65536
+ARGON2ID_TIME_COST = 3
+ARGON2ID_PARALLELISM = 4
+ARGON2ID_HASH_LENGTH = 32
+ARGON2ID_SALT_LENGTH = 16
+LEGACY_PASSWORD_SCHEME = "pbkdf2_sha256"
+
+_argon2id_password_hash = PasswordHash(
+    (
+        Argon2Hasher(
+            time_cost=ARGON2ID_TIME_COST,
+            memory_cost=ARGON2ID_MEMORY_COST_KIB,
+            parallelism=ARGON2ID_PARALLELISM,
+            hash_len=ARGON2ID_HASH_LENGTH,
+            salt_len=ARGON2ID_SALT_LENGTH,
+        ),
+    )
+)
+
+
+class UnsupportedPasswordHashError(ValueError):
+    pass
+
+
 def hash_password(password: str) -> str:
+    return hash_password_legacy_pbkdf2(password)
+
+
+def hash_password_argon2id(password: str) -> str:
+    return _argon2id_password_hash.hash(password)
+
+
+def hash_password_legacy_pbkdf2(password: str) -> str:
     salt = os.urandom(16)
     digest = hashlib.pbkdf2_hmac(
         "sha256",
@@ -21,21 +56,82 @@ def hash_password(password: str) -> str:
         salt,
         settings.password_iterations,
     )
-    return f"pbkdf2_sha256${settings.password_iterations}${_b64(salt)}${_b64(digest)}"
+    return f"{LEGACY_PASSWORD_SCHEME}${settings.password_iterations}${_b64(salt)}${_b64(digest)}"
 
 
 def verify_password(password: str, password_hash: str) -> bool:
+    scheme = identify_password_hash(password_hash)
+    if scheme == "argon2id":
+        try:
+            return _argon2id_password_hash.verify(password, password_hash)
+        except UnknownHashError as exc:
+            raise UnsupportedPasswordHashError("Unsupported password hash scheme") from exc
+    if scheme == LEGACY_PASSWORD_SCHEME:
+        return verify_password_legacy_pbkdf2(password, password_hash)
+    raise UnsupportedPasswordHashError("Unsupported password hash scheme")
+
+
+def verify_password_legacy_pbkdf2(password: str, password_hash: str) -> bool:
     try:
         scheme, iterations, salt_b64, digest_b64 = password_hash.split("$", 3)
     except ValueError:
         return False
-    if scheme != "pbkdf2_sha256":
+    if scheme != LEGACY_PASSWORD_SCHEME:
         return False
 
     salt = base64.b64decode(salt_b64.encode("ascii"))
     expected = base64.b64decode(digest_b64.encode("ascii"))
     actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, int(iterations))
     return hmac.compare_digest(actual, expected)
+
+
+def identify_password_hash(password_hash: str) -> str:
+    if password_hash.startswith("$argon2id$"):
+        return "argon2id"
+    scheme, separator, _rest = password_hash.partition("$")
+    if separator and scheme == LEGACY_PASSWORD_SCHEME:
+        return LEGACY_PASSWORD_SCHEME
+    return "unknown"
+
+
+def password_hash_metadata(password_hash: str) -> dict[str, str | int]:
+    scheme = identify_password_hash(password_hash)
+    if scheme == LEGACY_PASSWORD_SCHEME:
+        return _legacy_pbkdf2_metadata(password_hash)
+    if scheme == "argon2id":
+        return _argon2id_metadata(password_hash)
+    return {"auth.password.scheme": "unknown"}
+
+
+def _legacy_pbkdf2_metadata(password_hash: str) -> dict[str, str | int]:
+    try:
+        scheme, iterations, _salt_b64, _digest_b64 = password_hash.split("$", 3)
+    except ValueError:
+        return {"auth.password.scheme": "unknown"}
+
+    attributes: dict[str, str | int] = {"auth.password.scheme": scheme}
+    if iterations.isdigit():
+        attributes["auth.password.iterations"] = int(iterations)
+    return attributes
+
+
+def _argon2id_metadata(password_hash: str) -> dict[str, str | int]:
+    parts = password_hash.split("$")
+    if len(parts) < 4:
+        return {"auth.password.scheme": "unknown"}
+
+    attributes: dict[str, str | int] = {"auth.password.scheme": "argon2id"}
+    for item in parts[3].split(","):
+        key, separator, value = item.partition("=")
+        if not separator or not value.isdigit():
+            continue
+        if key == "m":
+            attributes["auth.password.memory_kib"] = int(value)
+        elif key == "t":
+            attributes["auth.password.time_cost"] = int(value)
+        elif key == "p":
+            attributes["auth.password.parallelism"] = int(value)
+    return attributes
 
 
 def create_access_token(*, user_id: int, email: str, role: str) -> tuple[str, str, datetime]:
